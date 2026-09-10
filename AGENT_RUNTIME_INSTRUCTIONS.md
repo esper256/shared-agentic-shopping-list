@@ -67,9 +67,19 @@ Before persistent mutations, inspect `Config` when available. It SHOULD identify
 ```text
 protocol_version
 runtime_instructions_url
+schema_version
+schema_url
 ```
 
-If `protocol_version` differs from the version currently loaded, MUST load the authoritative runtime instructions before writing.
+If `protocol_version` differs from the version currently loaded, MUST load the authoritative runtime instructions from `runtime_instructions_url` before writing.
+
+Before persistent writes, MUST load that URL when needed and MUST verify that the loaded document's declared Protocol Version equals `Config.protocol_version`.
+
+If the loaded document and `Config.protocol_version` disagree, MUST NOT perform potentially corrupting writes. Tell the user and reload the matching protocol.
+
+`runtime_instructions_url` MAY point at a mutable branch such as `main` during development. For releases, prefer immutable tag or commit URLs over `main`.
+
+If `schema_version` is unfamiliar, SHOULD load `schema_url` before relying on the workbook layout.
 
 If you cannot reliably establish that the current instructions remain available in active context, SHOULD reload them.
 
@@ -265,6 +275,14 @@ Watch for:
 
 Never silently overwrite conflicting evidence merely to make state appear consistent.
 
+When writing `recorded_at`, `occurred_at`, `inventory_as_of`, `intent_expires_at`, or `updated_at`:
+
+- MUST use ISO-8601 text with an explicit timezone offset, e.g. `2026-09-10T14:15:23-07:00`;
+- MUST NOT use locale strings such as `9/10/26 2:15 PM`, Google Sheets native date serials, or ambiguous timezone-less values;
+- for `occurred_at`, store only the precision supported by evidence (date-only is OK) and MUST NOT invent an exact time.
+
+`Config.timestamp_format` summarizes this convention. Timestamp columns SHOULD be Plain text so Sheets does not rewrite them.
+
 ---
 
 # 9. Stock Management
@@ -386,6 +404,8 @@ After routine updates, acknowledge concisely. Do not expose spreadsheet-level bo
 The Shopping Database MUST remain understandable and repairable by humans and other compatible agents.
 
 Do not introduce undocumented opaque conventions.
+
+Human-facing column widths and wrap for headers and long text fields (`item_policy`, `state_summary`, `raw_message`, `interpretation`) are recommended for repairability. That formatting is not required for API correctness.
 
 Preserve enough original evidence to explain or reconstruct important derived state.
 
