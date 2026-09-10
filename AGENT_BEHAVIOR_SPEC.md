@@ -1,148 +1,206 @@
-# Agent Instructions
+# Agent Behavior Specification
 
-**Status:** Draft specification  
+**Status:** Draft  
 **Version:** 0.1
 
-This document defines how an AI agent MUST interact with the shared household shopping and inventory workbook.
+## Document Purpose
 
-The workbook is shared state. Multiple humans and multiple independent AI agents may read and modify it.
+This document is the canonical behavioral specification for AI agents participating in the shared household shopping system.
 
-The agent's job is to preserve trustworthy household knowledge, capture new observations with minimal user friction, and help humans make good purchasing decisions.
+It is intended for developers, reviewers, test authors, maintainers, and anyone evaluating whether an agent implementation behaves correctly.
 
-The agent is not a conventional shopping-list application. Household inventory is often uncertain. The system therefore records observations, intent, preferences, and inferred state without pretending to know more than the household has actually established.
+It is **not** intended to be loaded in full into an agent's routine runtime context.
 
-Normative terms such as **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are intentional.
+A separate document, `AGENT_RUNTIME_INSTRUCTIONS.md`, contains the compact operational instructions actually provided to agents during normal use. Those runtime instructions MUST preserve the behavioral requirements defined here.
 
----
+This specification is intentionally more detailed than the runtime instructions. It records:
 
-# 1. Primary Objectives
+- behavioral invariants;
+- evidence semantics;
+- mutation rules;
+- decision principles;
+- edge cases;
+- rationale necessary to maintain the rules correctly over time.
 
-The agent MUST optimize for these goals, in approximately this order:
+Behavioral tests SHOULD reference the stable rule identifiers defined in this document.
 
-1. **Avoid household stockouts of useful recurring items.**
-2. **Preserve the truthfulness and recoverability of shared data.**
-3. **Respect explicit human shopping intent.**
-4. **Avoid unnecessary overstock.**
-5. **Preserve useful capacity for future purchases, especially unusually good deals.**
-6. **Minimize interaction friction.**
+The intended relationship is:
 
-A small amount of excess inventory is generally less harmful than unexpectedly running out of an important item.
+```text
+AGENT_BEHAVIOR_SPEC.md
+        │
+        │ canonical behavioral definition
+        ▼
+AGENT_RUNTIME_INSTRUCTIONS.md
+        │
+        │ compressed operational rules
+        ▼
+      Agent
+```
 
-However, excess inventory is not free. It consumes storage space, ties up money, can create waste, and reduces the household's ability to take advantage of later discounts without accumulating unreasonable quantities.
-
-The agent therefore SHOULD seek a useful inventory buffer rather than either extreme:
-
-- minimum possible inventory; or
-- maximum possible inventory.
-
-The correct goal is **appropriate household stock**.
-
----
-
-# 2. Core Data Principle
-
-The agent MUST distinguish between:
-
-- **what a human actually said or did;**
-- **what the system currently believes;**
-- **what the agent infers may be true;**
-- **what someone intends to purchase;**
-- **what the agent recommends purchasing.**
-
-These are not interchangeable.
-
-For example:
-
-> "I finished a bottle of ketchup."
-
-is an observation about consumption.
-
-It is NOT inherently equivalent to:
-
-> "There is no ketchup left."
-
-It is also NOT inherently equivalent to:
-
-> "Buy ketchup."
-
-The agent MUST preserve this distinction.
+Tests SHOULD validate both the intended behavior defined here and the compressed runtime instructions derived from it.
 
 ---
 
-# 3. Source of Truth
+# 1. System Goals
+
+## GOAL-01 — Prevent avoidable stockouts
+
+The system's highest practical household objective is to avoid unexpectedly running out of useful recurring items.
+
+Running out of an important household item is generally a more serious failure than buying a modest amount earlier than strictly necessary.
+
+This does not imply that every reduction in inventory should trigger a purchase.
+
+---
+
+## GOAL-02 — Preserve trustworthy shared state
+
+The workbook is shared state.
+
+Multiple humans and multiple independent AI agents may read and modify it.
+
+Preserving the truthfulness, interpretability, and recoverability of that state is a foundational requirement.
+
+A recommendation error is preferable to corrupting the underlying household record.
+
+---
+
+## GOAL-03 — Respect explicit human intent
+
+Explicit human instructions about what to buy, not buy, prefer, avoid, or correct take precedence over ordinary agent inference.
+
+Agents assist household decision-making; they do not substitute their own preferences for those of the household.
+
+---
+
+## GOAL-04 — Avoid unnecessary overstock
+
+Excess inventory has real costs:
+
+- storage space;
+- money tied up in inventory;
+- spoilage or expiration;
+- unnecessary duplication;
+- difficulty locating existing products;
+- reduced ability to take advantage of later discounts.
+
+The system SHOULD therefore maintain useful household buffers rather than maximizing stored quantity.
+
+---
+
+## GOAL-05 — Preserve future buying flexibility
+
+A household with unnecessarily excessive inventory may be unable to exploit a later sale without creating unreasonable stock levels.
+
+The agent SHOULD therefore consider future purchasing flexibility when deciding whether additional inventory is useful.
+
+The goal is not simply:
+
+> never run out
+
+nor:
+
+> always refill to maximum
+
+but rather:
+
+> maintain appropriate stock while preserving useful opportunities to purchase intelligently later.
+
+---
+
+## GOAL-06 — Minimize interaction friction
+
+Humans SHOULD be able to interact with the system using ordinary language.
+
+The system SHOULD NOT require users to maintain spreadsheet fields, issue formal commands, remember syntax, or translate normal household observations into database operations.
+
+---
+
+# 2. Core Data Model
+
+## DATA-01 — Separate events from derived state
 
 The workbook is expected to contain at least two logical datasets:
 
-## `Events`
+### `Events`
 
-An append-oriented history of observations and actions.
+An append-oriented history of observations, actions, corrections, and external evidence.
 
 Examples include:
 
 - an item was consumed;
 - an item was purchased;
-- someone observed that inventory was low;
+- someone observed low inventory;
 - someone explicitly reported a stockout;
 - someone requested an item;
 - someone cancelled a request;
 - someone corrected previous information;
-- someone stated a store or product preference;
-- an external system observed a sale.
+- someone stated a store preference;
+- someone stated a product preference;
+- an external source observed a deal.
 
-Events are historical evidence.
+Events represent historical evidence.
 
-## `Items`
+### `Items`
 
 The agent-maintained current interpretation of household state.
 
 Examples include:
 
 - current inventory estimate;
-- inventory confidence;
+- qualitative inventory state;
+- confidence;
 - explicit purchase intent;
 - preferred stores;
-- normal desired stock;
+- desired stock levels;
 - aliases;
-- notes;
-- latest relevant observations.
+- latest relevant observations;
+- product preferences.
 
 `Items` is derived working state.
 
-When `Items` and the event history cannot be reconciled, the agent SHOULD treat the event history and explicit human corrections as stronger evidence and repair `Items`.
+---
+
+## DATA-02 — Events are evidence; Items are interpretation
+
+The `Events` dataset is the historical evidence record.
+
+The `Items` dataset is a materialized interpretation of current household state.
+
+If the two cannot be reconciled, the agent SHOULD prefer:
+
+1. direct human corrections;
+2. underlying event evidence;
+3. a repaired `Items` representation.
+
+The agent MUST NOT treat a stale or incorrect `Items` row as more authoritative merely because it is the current row.
 
 ---
 
-# 4. Preserve Evidence
+## DATA-03 — Preserve evidence before interpretation
 
-The agent MUST NOT silently destroy evidence.
+Whenever practical, state-changing human observations SHOULD be represented as events before or alongside modifications to derived state.
 
-The agent MUST NOT delete historical events merely because:
+This allows future agents to reinterpret an observation if an earlier interpretation was poor.
 
-- they are old;
-- they are no longer reflected in current inventory;
-- they were mistaken;
-- they have been superseded;
-- a human later corrected them.
+For example:
 
-Corrections SHOULD normally be represented by an additional event.
+```text
+raw_message = "I opened the last toothpaste."
+```
 
-For example, if an event incorrectly says:
+preserves more information than storing only:
 
-> "We are out of ketchup."
-
-and a human later says:
-
-> "No, I found two bottles."
-
-the original event MAY remain in history and the correction MUST be recorded.
-
-The current `Items` state SHOULD then reflect the correction.
-
-Historical truth includes the fact that the earlier information was wrong.
+```text
+inventory_state = low
+```
 
 ---
 
-# 5. Never Invent Household Facts
+# 3. Evidence Integrity
+
+## INV-01 — Never invent household facts
 
 The agent MUST NOT invent:
 
@@ -157,58 +215,126 @@ The agent MUST NOT invent:
 - product substitutions;
 - storage capacity;
 - consumption rates;
-- user intent.
+- explicit user intent.
 
-Inference is allowed, but inference MUST remain distinguishable from established fact.
+Inference is allowed.
 
-If evidence only supports:
+Inference MUST remain distinguishable from established fact.
 
-> "There may be one bottle left."
+If the evidence supports:
 
-the agent MUST NOT convert that into:
+> There may be one bottle left.
 
-> "1 bottle remaining"
+the agent MUST NOT store:
 
-as though it were directly observed.
+> 1 bottle remaining
 
-False precision damages the shared state.
+as though that quantity were directly known.
 
 ---
 
-# 6. Explicit Evidence Has Priority
+## INV-02 — Never silently destroy evidence
 
-When evidence conflicts, use approximately this precedence:
+The agent MUST NOT silently delete historical events merely because:
 
-1. **Direct human correction**
-2. **Current direct human observation**
-3. **Explicit human purchase request or prohibition**
-4. **Confirmed purchase or consumption event**
-5. **Recent derived inventory state based on good evidence**
-6. **Historical consumption pattern**
-7. **Agent inference**
-8. **General assumptions**
+- they are old;
+- they are no longer reflected in current inventory;
+- they were mistaken;
+- they have been superseded;
+- a later observation disagrees with them.
 
-Recency matters within the same evidence class.
+Corrections SHOULD normally be represented by additional evidence.
+
+Historical truth includes the fact that an earlier belief may have been wrong.
+
+---
+
+## INV-03 — Never promote uncertainty to certainty
+
+Uncertain evidence MUST NOT be transformed into a definite fact without sufficient support.
 
 For example:
 
-> "We have plenty of milk."
+```text
+"We might be low on ketchup."
+```
 
-said today normally outweighs an inferred purchase cadence suggesting that milk should be running low.
+MUST NOT become:
 
-Similarly:
+```text
+quantity = 1
+```
 
-> "Don't buy ketchup."
+unless other evidence establishes that quantity.
 
-MUST override an agent recommendation to stock up unless the human later changes that instruction.
+The agent SHOULD preserve qualitative states and confidence when exact quantities are not justified.
 
 ---
 
-# 7. Inventory State and Shopping Intent Are Independent
+## INV-04 — Missing data is not negative evidence
 
-An item being low and an item being requested are separate concepts.
+Household members will not report every purchase, consumption event, or inventory change.
 
-An item MAY be:
+The absence of a recorded event MUST NOT normally be interpreted as evidence that something did not happen.
+
+For example:
+
+```text
+no recorded toothpaste purchase
+```
+
+does NOT imply:
+
+```text
+no toothpaste was purchased
+```
+
+This limitation MUST be considered whenever reconstructing inventory from historical events.
+
+---
+
+## INV-05 — Human corrections have highest authority
+
+Direct human corrections are high-value evidence.
+
+Examples:
+
+> "Actually, we have another ketchup in the garage."
+
+> "That wasn't Rice Krispies; it was Cheerios."
+
+> "I bought three, not two."
+
+The agent MUST update current state accordingly.
+
+The agent MUST NOT preserve its own previous interpretation merely for consistency.
+
+---
+
+## INV-06 — Stronger evidence outranks weaker evidence
+
+When evidence conflicts, the agent SHOULD use approximately this precedence:
+
+1. direct human correction;
+2. current direct human observation;
+3. explicit human purchase or suppression intent;
+4. confirmed purchase or consumption event;
+5. recent derived inventory state based on strong evidence;
+6. historical household pattern;
+7. agent inference;
+8. general assumptions.
+
+Recency matters within the same evidence class.
+
+---
+
+# 4. Distinct State Dimensions
+
+## STATE-01 — Inventory and purchase intent are independent
+
+Inventory state and explicit shopping intent MUST NOT be collapsed into one boolean shopping-list state.
+
+An item may be:
 
 ```text
 inventory = low
@@ -222,8 +348,6 @@ inventory = adequate
 explicit_purchase_request = true
 ```
 
-The agent MUST NOT collapse these into a single boolean shopping-list state.
-
 Examples:
 
 > "We're almost out of ketchup."
@@ -232,399 +356,216 @@ primarily changes inventory knowledge.
 
 > "Buy ketchup."
 
-primarily expresses purchase intent.
+primarily changes purchase intent.
 
-> "Don't buy ketchup; there's enough."
-
-expresses both inventory information and an explicit shopping constraint.
+The distinction MUST be preserved.
 
 ---
 
-# 8. Handle Uncertainty Deliberately
+## STATE-02 — Preferences are independent from need
 
-Household inventory is frequently uncertain.
+Store preferences, brand preferences, package preferences, and substitutions MUST NOT be interpreted as evidence that an item is needed.
 
-The agent SHOULD preserve uncertainty rather than forcing every item into a precise quantity.
+For example:
 
-Useful states may include concepts such as:
+> "We usually buy ketchup at FoodMaxx."
 
-- out;
-- very low;
-- probably low;
-- adequate;
-- plenty;
-- unknown.
+does not imply:
 
-A confidence value or equivalent metadata MAY supplement the state.
+> Buy ketchup.
+
+---
+
+## STATE-03 — Recommendations are derived, not stored facts
+
+An agent recommendation such as:
+
+> Worth stocking up.
+
+is a decision derived from state and circumstances.
+
+It MUST NOT be confused with:
+
+- inventory state;
+- explicit purchase intent;
+- a human preference;
+- a direct observation.
+
+Recommendations may change as circumstances change.
+
+---
+
+## STATE-04 — External commercial data is independent from household inventory
+
+Retailer inventory, pricing, promotions, receipt history, and deal observations MAY influence recommendations.
+
+They MUST NOT directly rewrite household inventory state.
+
+A sale means:
+
+> buying opportunity
+
+not:
+
+> household shortage.
+
+---
+
+# 5. Inventory Representation
+
+## INVTRY-01 — Exact quantities require reliable evidence
 
 The agent SHOULD use exact quantities only when evidence reasonably supports them.
 
-For example, if the current reliable state is:
+For example:
 
 ```text
 estimated_quantity = 2 bottles
 confidence = high
 ```
 
-and someone reports consuming one bottle, the agent MAY derive:
+combined with a reliable observation:
+
+```text
+consumed = 1 bottle
+```
+
+MAY support:
 
 ```text
 estimated_quantity = 1 bottle
 ```
 
-If the previous quantity was uncertain, the agent SHOULD instead weaken the inventory estimate rather than manufacture a precise count.
+But only if the prior quantity remains trustworthy.
 
 ---
 
-# 9. Quantities Are Estimates Unless Explicitly Observed
+## INVTRY-02 — Arithmetic does not guarantee factual accuracy
 
-When maintaining quantity estimates, the agent MUST consider whether the previous quantity is still trustworthy.
-
-A mathematically valid subtraction does not guarantee a factually valid inventory count.
+A mathematically valid subtraction does not necessarily produce a reliable physical inventory count.
 
 For example:
 
 ```text
-last known quantity: 3
-observation: consumed 1
+last known quantity = 3
+consumed = 1
 ```
 
-does not necessarily imply `2` if the last known quantity is months old and other household consumption may have occurred.
+does not necessarily imply:
+
+```text
+current quantity = 2
+```
+
+if the last known quantity is old and unreported household activity may have occurred.
 
 The agent SHOULD consider:
 
 - age of the previous observation;
 - confidence in the previous quantity;
 - intervening events;
-- whether household members may have consumed or purchased the item without reporting it.
-
-When confidence is insufficient, use an approximate state rather than an exact quantity.
+- expected unreported activity;
+- nature of the product.
 
 ---
 
-# 10. Stockout Risk Versus Overstock
+## INVTRY-03 — Qualitative inventory states are valid
 
-The system SHOULD be biased somewhat toward preventing stockouts, but it MUST NOT treat every reduction in inventory as a command to replenish immediately.
+The system SHOULD support qualitative states when exact quantities are unavailable.
 
-Purchasing more inventory has costs:
-
-- cupboard, refrigerator, freezer, or storage capacity;
-- money;
-- spoilage or expiration;
-- unnecessary duplication;
-- reduced ability to exploit future discounts.
-
-An agent SHOULD therefore reason about whether an item needs replenishment rather than reflexively restoring every consumed unit.
-
-For a typical recurring item:
+Useful concepts may include:
 
 ```text
-normal stock
-    ↓ consumption
-still adequate
+out
+very_low
+probably_low
+adequate
+plenty
+unknown
 ```
 
-does not necessarily imply a purchase.
-
-A purchase becomes more attractive as evidence indicates that inventory is approaching a useful minimum.
+The exact schema may evolve, but the semantic ability to represent uncertainty MUST remain.
 
 ---
 
-# 11. Normal Stock and Stock-Up Stock Are Different
+## INVTRY-04 — Confidence may decay with staleness
 
-Where enough information exists, the system SHOULD distinguish conceptually between:
+Inventory information SHOULD become less trusted over time when ordinary household activity could reasonably have changed it.
 
-- **minimum acceptable stock**
-- **normal target stock**
-- **reasonable stock-up quantity**
-
-These values MAY be explicit or inferred conservatively over time.
-
-For example, the household may normally want:
-
-```text
-minimum: 1 unopened bottle
-normal: 2 bottles
-sale stock-up ceiling: 4 bottles
-```
-
-The agent MUST NOT invent such values merely because this model exists.
-
-They should arise from explicit preferences or sufficiently strong historical evidence.
-
----
-
-# 12. Deals Modify Purchasing Decisions; They Do Not Rewrite Inventory
-
-A sale is evidence about purchasing opportunity.
-
-It is NOT evidence that the household needs the product.
-
-External deal data MUST NOT directly change household inventory.
+The rate of decay depends on the item.
 
 For example:
 
-```text
-inventory: adequate
-normal purchase: recurring
-discount: unusually strong
-```
+- milk inventory may become stale quickly;
+- aluminum foil inventory may remain informative for months;
+- a recent explicit stockout remains strong until contradicted or a purchase occurs.
 
-may produce:
-
-> Worth considering as a stock-up purchase.
-
-It MUST NOT produce:
-
-```text
-inventory: low
-```
-
-Similarly:
-
-```text
-inventory: excessive
-discount: excellent
-```
-
-may still correctly produce:
-
-> Skip it; you already have plenty.
+The system SHOULD NOT use one universal staleness interval for all items.
 
 ---
 
-# 13. Store Preferences Are Preferences, Not Absolute Rules
+## INVTRY-05 — "Out" is qualitative evidence, not necessarily a physical audit
 
 Statements such as:
 
-> "We usually buy ketchup at FoodMaxx."
+> "We're out."
 
-SHOULD establish a store preference.
+> "There isn't any left."
 
-They MUST NOT normally prohibit purchasing ketchup elsewhere.
+> "We have no more."
 
-Agents SHOULD distinguish among concepts such as:
+are strong evidence of household unavailability.
 
-- preferred store;
-- acceptable store;
-- avoid store;
-- store-specific product;
-- explicit store requirement.
+Absent contradictory newer evidence, the agent SHOULD treat the item as needing replenishment.
 
-For example:
+However, "out" does not necessarily justify an exact physical quantity of numeric zero.
 
-> "Only buy this at Costco."
+The household may mean:
 
-is stronger than:
+- no usable item is known;
+- none is accessible;
+- none is in the normal storage location;
+- none is available for ordinary use.
 
-> "We usually get this at Costco."
-
-When language is ambiguous, preserve the weaker interpretation.
+The system SHOULD preserve the human observation without inventing unnecessary physical precision.
 
 ---
 
-# 14. Item Identity and Duplicate Prevention
+## INVTRY-06 — "Last one" has distinct semantics
 
-Before creating a new item, the agent MUST attempt to resolve it against existing canonical items and aliases.
+Statements such as:
 
-The agent SHOULD avoid creating separate items for superficial naming differences such as:
+> "I opened the last toothpaste."
 
-```text
-Ketchup
-ketchup
-Heinz ketchup
-the ketchup
-```
+usually imply:
 
-when they clearly refer to the same household need.
+- one unit is currently in use;
+- no unopened reserve unit is known to remain;
+- a replacement will probably be needed;
+- the household is not necessarily currently unable to use the product.
 
-However, the agent MUST NOT merge products that may represent meaningfully different household needs.
-
-For example:
-
-```text
-whole milk
-oat milk
-```
-
-SHOULD NOT be merged merely because both are "milk."
-
-Similarly, a household may treat:
-
-```text
-kids toothpaste
-adult toothpaste
-```
-
-as separate items.
-
-When identity is genuinely ambiguous and the distinction matters, the agent SHOULD ask only if necessary to avoid damaging shared state.
-
-Otherwise, it MAY record the observation conservatively without making an irreversible merge.
+This normally represents low reserve inventory rather than an immediate stockout.
 
 ---
 
-# 15. Prefer Household Need Categories Over Retail SKUs
+# 6. Purchase Intent
 
-The canonical item SHOULD normally represent the thing the household needs, not a particular retailer SKU.
+## INTENT-01 — Explicit purchase requests persist
 
-For example:
+When a human explicitly requests an item, that intent SHOULD persist until:
 
-```text
-Ketchup
-Dishwasher detergent
-Paper towels
-Rice Krispies
-```
+- the requested quantity is purchased;
+- a human cancels it;
+- a human says it is no longer needed;
+- strong new evidence clearly supersedes it and the interpretation is sufficiently unambiguous.
 
-are generally better canonical items than retailer-specific SKU identifiers.
+The agent SHOULD NOT silently remove explicit purchase intent merely because it believes inventory is adequate.
 
-Brand, package, size, or SKU information MAY be stored as preferences or purchase history.
-
-Create separate canonical items when different variants are not reasonably interchangeable for the household.
-
-This allows:
-
-> "We need ketchup."
-
-to remain meaningful even if the household normally buys one brand but would accept another.
+Humans may have reasons not represented in inventory data.
 
 ---
 
-# 16. Raw Human Language Is Valuable Evidence
-
-When an interaction materially changes household state, the agent SHOULD preserve the user's original language in the corresponding event when the schema provides a place for it.
-
-For example:
-
-```text
-raw_message = "I opened the last toothpaste."
-```
-
-is more valuable than preserving only:
-
-```text
-inventory_state = low
-```
-
-The raw statement permits future agents to reinterpret the evidence if the current interpretation was poor.
-
----
-
-# 17. Event Recording Rules
-
-When a human statement materially changes persistent household knowledge, the agent SHOULD:
-
-1. identify the canonical item;
-2. determine whether the statement contains one or more meaningful observations;
-3. append appropriate event data;
-4. update the derived `Items` state;
-5. preserve uncertainty;
-6. avoid duplicate processing.
-
-Not every conversational statement requires an event.
-
-For example:
-
-> "What do we need from Costco?"
-
-is a query and normally does not mutate persistent state.
-
----
-
-# 18. Idempotency and Duplicate Messages
-
-The same user statement MUST NOT be applied twice merely because an agent retries an operation or rereads recent conversation history.
-
-If the storage system provides message IDs, event IDs, source references, or another stable identifier, the agent SHOULD use them to detect duplicate processing.
-
-If no stable identifier exists, the agent SHOULD check recent events for an obviously identical observation from the same actor before creating another one.
-
-Example failure:
-
-```text
-User: "I bought two bottles of ketchup."
-```
-
-accidentally becoming two events and four bottles because a tool call was retried.
-
-Agents MUST actively avoid this.
-
----
-
-# 19. Write Ordering
-
-When possible, agents SHOULD write state-changing operations in this order:
-
-```text
-1. Read current relevant state.
-2. Append the new event.
-3. Update derived item state.
-4. Verify that the resulting state is internally plausible.
-```
-
-The event log is the recoverable record.
-
-If an operation fails after the event is appended but before `Items` is updated, a later agent SHOULD be able to repair the derived state.
-
-This is preferable to updating `Items` while losing the evidence that caused the change.
-
----
-
-# 20. Concurrent Agents
-
-Multiple agents may modify the workbook independently.
-
-Agents MUST assume that state may have changed since it was last read.
-
-Before modifying an existing item, the agent SHOULD read the current row and any immediately relevant recent events.
-
-Agents MUST NOT assume that their conversational context contains the latest household state.
-
-When another agent has made a newer compatible update, incorporate it.
-
-When another agent has made a conflicting update, preserve both pieces of evidence and resolve current state according to evidence strength and recency.
-
-Do not silently erase another agent's observation merely because it conflicts with your previous belief.
-
----
-
-# 21. Corrections
-
-Human corrections are high-value evidence and SHOULD be easy.
-
-Examples:
-
-> "Actually, we have another ketchup in the garage."
-
-> "That wasn't Rice Krispies; it was Cheerios."
-
-> "I bought three, not two."
-
-The agent SHOULD correct current state and add sufficient historical information to explain the change.
-
-The agent MUST NOT defend or preserve its own earlier inference merely for consistency.
-
-Correct household state is more important than preserving an agent's interpretation.
-
----
-
-# 22. Explicit Purchase Requests
-
-When a human explicitly asks to buy an item, the agent SHOULD preserve that intent until one of the following occurs:
-
-- the item is purchased;
-- a human cancels the request;
-- a human explicitly says it is no longer needed;
-- strong new evidence clearly supersedes the request and the agent confirms that interpretation when necessary.
-
-The agent SHOULD NOT silently remove an explicit request merely because it believes sufficient inventory exists.
-
-Humans may request items for reasons not represented in inventory data.
-
----
-
-# 23. Explicit Negative Intent
+## INTENT-02 — Explicit negative intent must be respected
 
 Statements such as:
 
@@ -636,117 +577,675 @@ Statements such as:
 
 MUST be respected.
 
-Where appropriate, the agent SHOULD preserve the scope and duration of the prohibition.
+Negative intent MAY be temporary or scoped.
 
-The agent MUST NOT transform a temporary instruction into a permanent preference.
-
-For example:
+The agent MUST NOT convert:
 
 > "Don't buy bananas this week."
 
-does NOT mean:
+into a permanent rule never to purchase bananas.
+
+---
+
+## INTENT-03 — Purchases satisfy intent only to the extent supported
+
+A purchase SHOULD update both purchase history and inventory state.
+
+A purchase MAY satisfy an explicit request.
+
+However, the agent MUST NOT automatically clear a request if the purchase does not clearly satisfy it.
+
+For example:
 
 ```text
-never buy bananas
+request = buy 4 bottles
+purchase = 1 bottle
+```
+
+does not fully satisfy the request.
+
+---
+
+# 7. Item Identity
+
+## ITEM-01 — Resolve existing canonical items before creating new ones
+
+Before creating a new item, the agent MUST attempt to resolve it against existing canonical items and aliases.
+
+The agent SHOULD avoid duplicates caused by superficial naming differences such as:
+
+```text
+Ketchup
+ketchup
+Heinz ketchup
+the ketchup
+```
+
+when those clearly refer to the same household need.
+
+---
+
+## ITEM-02 — Do not merge meaningfully different household needs
+
+The agent MUST NOT merge products merely because they belong to the same broad category.
+
+For example:
+
+```text
+whole milk
+oat milk
+```
+
+SHOULD remain distinct when the household treats them differently.
+
+Similarly:
+
+```text
+kids toothpaste
+adult toothpaste
+```
+
+may be separate household items.
+
+---
+
+## ITEM-03 — Prefer household needs over retailer SKUs
+
+Canonical items SHOULD normally represent household needs rather than retailer-specific SKUs.
+
+Examples:
+
+```text
+Ketchup
+Dishwasher detergent
+Paper towels
+Rice Krispies
+```
+
+are generally better canonical items than specific store item numbers.
+
+Brand, package, store SKU, or size information MAY be associated as preferences or purchase history.
+
+---
+
+## ITEM-04 — Preserve ambiguity when identity is uncertain
+
+When item identity is genuinely ambiguous, the agent SHOULD avoid irreversible merges.
+
+The agent SHOULD ask a clarifying question only when necessary to avoid materially corrupting shared state.
+
+Otherwise it MAY record evidence conservatively until the ambiguity can be resolved.
+
+---
+
+# 8. Store and Product Preferences
+
+## PREF-01 — Store preferences are not absolute unless stated
+
+Statements such as:
+
+> "We usually buy ketchup at FoodMaxx."
+
+SHOULD establish a store preference.
+
+They MUST NOT normally prohibit purchasing the item elsewhere.
+
+The agent SHOULD distinguish concepts such as:
+
+- preferred store;
+- acceptable store;
+- avoid store;
+- store-specific product;
+- required store.
+
+---
+
+## PREF-02 — Interpret weaker language conservatively
+
+> "We usually get this at Costco."
+
+is weaker than:
+
+> "Only buy this at Costco."
+
+When language is ambiguous, the agent SHOULD preserve the weaker interpretation.
+
+---
+
+## PREF-03 — Do not infer durable preferences from isolated behavior
+
+A single purchase at a retailer MUST NOT normally establish a persistent preferred store.
+
+Persistent preferences should arise from:
+
+- explicit human statements; or
+- sufficiently strong repeated evidence.
+
+---
+
+## PREF-04 — Temporary behavior should remain temporary
+
+The agent SHOULD avoid converting temporary circumstances into permanent household preferences.
+
+For example:
+
+> "Buy extra milk because family is visiting."
+
+does not establish a permanently higher normal milk quantity.
+
+Where practical, temporary state SHOULD include scope, expiry, or explanatory context.
+
+---
+
+# 9. Event Recording
+
+## EVENT-01 — Material observations should be persisted
+
+When a human statement materially changes persistent household knowledge, the agent SHOULD record sufficient event information to preserve what happened.
+
+Possible event types include:
+
+```text
+consumed
+purchased
+opened
+ran_out
+observed_low
+observed_plenty
+requested
+request_cancelled
+store_preference
+product_preference
+correction
+deal_observed
+```
+
+The precise schema may evolve.
+
+---
+
+## EVENT-02 — Preserve raw human language when useful
+
+For meaningful state-changing observations, the original user message SHOULD be retained when the schema provides a place for it.
+
+Example:
+
+```text
+raw_message = "I opened the last toothpaste."
+```
+
+This permits later agents to reinterpret the original evidence.
+
+---
+
+## EVENT-03 — Separate human actor from writing agent
+
+When identity is recorded, the system SHOULD distinguish:
+
+```text
+actor = Eric
+written_by = ChatGPT
+```
+
+rather than treating the agent as the person who purchased, consumed, or observed the item.
+
+This distinction becomes important in multi-human, multi-agent environments.
+
+---
+
+## EVENT-04 — Queries do not normally mutate state
+
+Not every conversational interaction requires an event.
+
+For example:
+
+> "What do we need from Costco?"
+
+is normally a query.
+
+It SHOULD NOT create persistent household state merely because it was asked.
+
+---
+
+# 10. Mutation Protocol
+
+## MUT-01 — Read before write
+
+Before modifying an existing item, the agent SHOULD read:
+
+- the current relevant item state;
+- immediately relevant recent events.
+
+Agents MUST assume shared state may have changed since their conversational context was created.
+
+---
+
+## MUT-02 — Prefer event-first mutation ordering
+
+When practical, a state-changing operation SHOULD occur in this order:
+
+```text
+1. Read relevant current state.
+2. Resolve canonical item identity.
+3. Interpret the new evidence.
+4. Append the event.
+5. Update derived item state.
+6. Verify resulting state.
+```
+
+This makes the event log the recoverable record.
+
+---
+
+## MUT-03 — Writes must be idempotent where possible
+
+The same user statement MUST NOT be applied multiple times merely because:
+
+- a tool call retries;
+- an agent retries;
+- recent conversation context is reread;
+- the same mutation is resumed after a partial failure.
+
+If stable identifiers are available, agents SHOULD use them.
+
+Otherwise, agents SHOULD inspect sufficiently recent events for obvious duplicates before creating another.
+
+Example prohibited failure:
+
+```text
+User:
+"I bought two bottles of ketchup."
+
+Accidental result:
+two duplicate events
+inventory increased by four bottles
 ```
 
 ---
 
-# 24. Purchases
+## MUT-04 — Partial failures must remain repairable
 
-When a purchase is reported, the agent SHOULD update both:
+If an event is successfully appended but the derived `Items` update fails, a later agent SHOULD be able to reconstruct the intended state.
 
-- purchase history; and
-- inventory state.
+This is preferable to updating `Items` while losing the underlying evidence.
 
-A purchase does not necessarily imply the item is now adequately stocked.
+---
 
-For example:
+## MUT-05 — Verify plausibility after mutation
+
+After a state-changing write, the agent SHOULD check whether the result is internally plausible.
+
+Examples of suspicious results include:
+
+- negative inventory;
+- duplicate canonical items;
+- a strong stockout and strong "plenty" state simultaneously without explanation;
+- a purchase request disappearing without being satisfied;
+- exact quantities appearing from uncertain evidence.
+
+---
+
+# 11. Concurrent Agents
+
+## CONC-01 — Assume other agents may have written newer state
+
+Multiple independent agents may operate on the workbook.
+
+An agent MUST NOT assume that its conversation history represents the latest shared state.
+
+Before writing important state, it SHOULD retrieve the current relevant state.
+
+---
+
+## CONC-02 — Preserve compatible concurrent updates
+
+When another agent has made a newer compatible update, the current agent SHOULD incorporate it rather than overwrite it.
+
+---
+
+## CONC-03 — Preserve conflicting evidence
+
+When concurrent observations conflict, the agent MUST NOT silently erase one merely because it contradicts an earlier belief.
+
+Both pieces of evidence SHOULD remain recoverable.
+
+Current state SHOULD then be derived using evidence quality, recency, and explicit corrections.
+
+---
+
+# 12. Consumption and Purchases
+
+## USE-01 — Consumption reduces inventory evidence, not necessarily to zero
+
+A consumption event SHOULD reduce the estimated available inventory or confidence that adequate inventory remains.
+
+Consumption MUST NOT automatically imply a stockout.
+
+Example:
+
+> "I used a bottle of ketchup."
+
+means inventory decreased.
+
+It does not inherently mean:
+
+> buy ketchup now.
+
+---
+
+## USE-02 — Use arithmetic only when the prior quantity remains trustworthy
+
+When reliable quantities exist, the agent MAY apply arithmetic.
+
+When prior quantities are uncertain or stale, the agent SHOULD instead modify qualitative inventory state.
+
+---
+
+## BUY-01 — Purchases affect both history and inventory
+
+When a purchase is reported, the agent SHOULD update:
+
+- purchase history;
+- household inventory state.
+
+The purchase quantity SHOULD be preserved when explicitly known.
+
+---
+
+## BUY-02 — A purchase does not automatically mean "adequately stocked"
+
+A reported purchase does not necessarily satisfy normal household inventory needs.
+
+Example:
 
 > "I bought one gallon of milk."
 
-may still leave a large household below its normal desired quantity.
+may still leave a large household below its desired quantity.
 
-Similarly, a reported purchase SHOULD NOT automatically clear an explicit request for a larger quantity unless the request has actually been satisfied.
-
----
-
-# 25. Consumption
-
-A consumption event SHOULD reduce confidence that sufficient stock remains.
-
-When reliable quantities exist, the agent MAY update them arithmetically.
-
-When quantities are uncertain, the agent SHOULD update the qualitative inventory state instead.
-
-Consumption does NOT automatically create purchase intent.
+Derived stock state should reflect the total evidence, not merely the existence of a purchase.
 
 ---
 
-# 26. "Last One" Language
+# 13. Stock Management Principles
 
-Statements involving terms such as:
+## STOCK-01 — Bias toward preventing meaningful stockouts
 
-> "I opened the last one."
+When uncertainty cannot easily be resolved, the system SHOULD be somewhat more tolerant of modest overstock than of a plausible meaningful stockout.
 
-require careful interpretation.
-
-Usually this means:
-
-- there are no unopened reserve units known to remain;
-- one unit is currently in use;
-- a future replacement is probably appropriate;
-- the household is not necessarily currently unable to use the product.
-
-The agent SHOULD represent this distinction.
-
-For consumables with meaningful lead time between opening and exhaustion, this often indicates **low inventory**, not **out**.
+This is a heuristic, not an instruction to overbuy indiscriminately.
 
 ---
 
-# 27. "Out" Language
+## STOCK-02 — Inventory reduction does not automatically trigger replenishment
 
-Direct statements such as:
+The agent MUST NOT reflexively restore every consumed unit.
 
-> "We're out."
+For example:
 
-> "There isn't any left."
+```text
+normal stock
+    ↓ one unit consumed
+still adequate
+```
 
-> "We have no more."
-
-are strong evidence of a stockout.
-
-Absent contradictory newer evidence, the agent SHOULD treat the item as needing replenishment.
-
-This is substantially stronger than statements such as:
-
-> "We're getting low."
-
-or:
-
-> "I used one."
+does not necessarily justify a purchase.
 
 ---
 
-# 28. Shopping Trip Briefings
+## STOCK-03 — Distinguish minimum, normal, and stock-up quantities
 
-When asked a question such as:
+Where evidence supports it, the system SHOULD conceptually distinguish:
+
+- minimum acceptable stock;
+- normal target stock;
+- reasonable stock-up ceiling.
+
+Example:
+
+```text
+minimum = 1 unopened bottle
+normal = 2 bottles
+sale stock-up ceiling = 4 bottles
+```
+
+These values MUST NOT be invented solely because the model permits them.
+
+They SHOULD arise from explicit household preferences or sufficiently strong historical evidence.
+
+---
+
+## STOCK-04 — Overstock reduces future optionality
+
+The agent SHOULD recognize that excess inventory can reduce the ability to exploit future discounts.
+
+For example, unnecessarily purchasing four additional bottles today may make an excellent sale next week irrelevant because storage is already overfull.
+
+This consideration SHOULD influence stock-up recommendations.
+
+---
+
+## STOCK-05 — Storage and perishability matter
+
+When considering excess inventory, agents SHOULD account for:
+
+- physical bulk;
+- storage constraints;
+- spoilage;
+- expiration;
+- frequency of use;
+- replacement flexibility.
+
+The agent MUST NOT assume infinite storage.
+
+---
+
+# 14. Deal-Aware Behavior
+
+## DEAL-01 — Deals modify purchase desirability, not inventory truth
+
+A sale is evidence about purchasing opportunity.
+
+It is not evidence that the household needs the product.
+
+Example:
+
+```text
+inventory = adequate
+discount = unusually strong
+```
+
+may support:
+
+> Worth considering as a stock-up purchase.
+
+It MUST NOT support:
+
+```text
+inventory = low
+```
+
+---
+
+## DEAL-02 — Strong deals do not override obvious excess inventory
+
+Example:
+
+```text
+inventory = excessive
+discount = excellent
+```
+
+may correctly result in:
+
+> Skip it; you already have plenty.
+
+A discount alone MUST NOT force a stock-up recommendation.
+
+---
+
+## DEAL-03 — Stock-up recommendations should consider expected future use
+
+A deal-aware recommendation SHOULD consider:
+
+- likelihood the household will eventually consume the item;
+- magnitude of discount;
+- historical purchase price;
+- current inventory;
+- normal consumption;
+- storage burden;
+- perishability;
+- household preferences;
+- likely future purchasing opportunities.
+
+---
+
+## DEAL-04 — Favor stock-up recommendations for suitable products
+
+The agent SHOULD be more willing to recommend stocking up on items that are:
+
+- regularly consumed;
+- shelf-stable;
+- compact relative to value;
+- expensive at normal price;
+- unusually discounted.
+
+The agent SHOULD be more conservative with:
+
+- perishables;
+- bulky goods;
+- uncertain household demand;
+- products already held in large quantities.
+
+---
+
+## DEAL-05 — Do not fabricate economic precision
+
+The agent MAY use qualitative language such as:
+
+> good stock-up opportunity
+
+> unusually cheap
+
+> probably worth waiting
+
+when evidence supports it.
+
+It SHOULD NOT invent exact optimization scores, savings probabilities, consumption forecasts, or mathematically "ideal" quantities without supporting data.
+
+---
+
+# 15. External Data
+
+## EXT-01 — Household observations outrank external data
+
+Retailer APIs, receipt histories, deal scrapers, and other external systems provide useful evidence.
+
+They MUST NOT override stronger direct household observations.
+
+Example:
+
+```text
+Retailer history:
+no milk purchase for 9 days
+
+Human:
+"We bought milk yesterday somewhere else."
+```
+
+The human observation wins.
+
+---
+
+## EXT-02 — Retailer stock does not imply household need
+
+A retailer showing an item in stock says nothing about whether the household should purchase it.
+
+Retailer availability is commercial state, not household state.
+
+---
+
+## EXT-03 — Deal data should expire independently
+
+External promotion data is transient.
+
+Deal observations SHOULD normally include relevant temporal information such as:
+
+- observed time;
+- promotion start;
+- promotion end;
+- retailer;
+- location;
+- source.
+
+Expired promotions SHOULD cease influencing current recommendations.
+
+---
+
+# 16. Learning Household Patterns
+
+## LEARN-01 — Learn conservatively
+
+Agents MAY infer useful recurring patterns such as:
+
+- usual stores;
+- purchase intervals;
+- accepted brands;
+- typical package quantities;
+- approximate consumption rates.
+
+Patterns MUST remain subordinate to direct evidence and explicit preferences.
+
+---
+
+## LEARN-02 — Repeated evidence is stronger than isolated evidence
+
+Persistent household patterns SHOULD generally require repeated supporting observations.
+
+A single event SHOULD NOT normally establish a durable preference or rule.
+
+---
+
+## LEARN-03 — Learned patterns should weaken when stale or contradicted
+
+Household behavior changes.
+
+Learned patterns SHOULD remain revisable.
+
+New explicit human behavior or corrections MUST be able to supersede historical patterns.
+
+---
+
+# 17. Shopping Trip Briefings
+
+## TRIP-01 — Provide actionable summaries, not raw database dumps
+
+When asked:
 
 > "I'm going to FoodMaxx. What do I need to know?"
 
-the agent SHOULD produce a concise, actionable briefing rather than dumping spreadsheet rows.
+the agent SHOULD synthesize relevant household state into a concise practical briefing.
 
-The agent SHOULD consider:
+It SHOULD NOT merely dump spreadsheet rows.
 
-- explicit requests;
+---
+
+## TRIP-02 — Consider multiple reasons an item may matter
+
+A trip briefing SHOULD consider:
+
+- explicit purchase requests;
 - known stockouts;
 - likely shortages;
 - items worth checking before departure;
-- store preferences;
+- preferred store;
 - current deals;
-- known excessive stock;
+- known excess stock;
 - recent purchases;
 - likely near-term consumption.
+
+---
+
+## TRIP-03 — Useful recommendation categories
 
 Useful conceptual categories include:
 
@@ -758,15 +1257,17 @@ Worth stocking up
 Skip / already well stocked
 ```
 
-These categories are guidance rather than mandatory wording.
+These categories are conceptual.
+
+Agents MAY use more natural wording.
 
 ---
 
-# 29. Distinguish "Check" From "Buy"
+## TRIP-04 — Distinguish "check" from "buy"
 
-When evidence is uncertain and the household can easily inspect inventory before leaving, recommending a check is often superior to guessing.
+When evidence is uncertain and inventory can easily be inspected before leaving, recommending a check is often superior to guessing.
 
-For example:
+Example:
 
 ```text
 Evidence:
@@ -774,134 +1275,31 @@ one ketchup bottle was recently consumed
 remaining reserve unknown
 ```
 
-A good response may be:
+A useful response is:
 
 > Check ketchup before leaving; one bottle was recently used up and I don't know whether another remains.
 
-This preserves stockout protection without unnecessarily recommending duplicate purchases.
+This reduces both stockout risk and unnecessary purchasing.
 
 ---
 
-# 30. Deal-Aware Stock-Up Recommendations
+## TRIP-05 — Relevant negative information may be useful
 
-When reliable deal information is available, the agent MAY recommend buying beyond immediate need.
+A trip briefing MAY include important reasons not to buy something when doing so is likely to prevent a mistake.
 
-The strength of a stock-up recommendation SHOULD consider:
+Example:
 
-- likelihood the household will eventually consume the item;
-- discount quality;
-- historical purchase price;
-- current inventory;
-- normal consumption;
-- storage burden;
-- perishability;
-- household preferences;
-- likelihood that buying now would create unreasonable excess.
+> Don't get paper towels; they were recently reported as heavily overstocked.
 
-The agent SHOULD be more willing to stock up on:
-
-- regularly consumed;
-- shelf-stable;
-- compact;
-- expensive-at-normal-price
-
-items when discounts are unusually favorable.
-
-The agent SHOULD be more conservative with:
-
-- perishable items;
-- bulky products;
-- products with uncertain household demand;
-- items already held in large quantity.
+Routine adequate items do not need to be listed merely to say they are adequate.
 
 ---
 
-# 31. Do Not Fabricate Economic Precision
+# 18. Interaction Design
 
-An agent MAY use heuristic language such as:
+## UX-01 — No special command syntax required
 
-> good stock-up opportunity
-
-> probably worth waiting
-
-> unusually cheap
-
-when evidence supports it.
-
-It SHOULD NOT invent exact economic scores, savings probabilities, consumption forecasts, or ideal quantities without data.
-
-The system values useful judgment, not fake mathematical certainty.
-
----
-
-# 32. Learn Conservatively
-
-Agents MAY derive useful patterns over time, such as:
-
-- common purchase stores;
-- approximate purchase intervals;
-- frequently accepted brands;
-- normal quantities;
-- likely household consumption.
-
-These patterns MUST remain subordinate to direct observations and explicit preferences.
-
-Agents SHOULD require repeated evidence before turning a pattern into persistent household knowledge.
-
-A single purchase at Costco does not establish:
-
-```text
-preferred_store = Costco
-```
-
-unless the human indicates that preference.
-
----
-
-# 33. Do Not Overfit Temporary Behavior
-
-Household behavior changes.
-
-Agents SHOULD avoid turning temporary circumstances into permanent rules.
-
-Examples:
-
-> "Buy extra milk because family is visiting."
-
-does not establish a permanently higher normal milk inventory.
-
-> "We're avoiding cereal this month."
-
-does not establish a permanent prohibition.
-
-Where practical, temporary state SHOULD have an expiry, scope, or explanatory note.
-
----
-
-# 34. Human Understandability Is an Invariant
-
-The workbook MUST remain understandable and repairable by a human.
-
-Agents SHOULD prefer clear values and natural-language notes over opaque encodings.
-
-Agents MUST NOT introduce undocumented conventions that another human or agent cannot reasonably interpret.
-
-If the storage format evolves, new conventions SHOULD be documented.
-
-A human opening the workbook should be able to understand:
-
-- what the household believes;
-- why it believes it;
-- what someone explicitly requested;
-- what happened recently.
-
----
-
-# 35. Minimal Friction
-
-Users SHOULD NOT need special commands.
-
-The agent should interpret ordinary statements such as:
+Users SHOULD be able to say:
 
 > "We're low on milk."
 
@@ -915,17 +1313,29 @@ The agent should interpret ordinary statements such as:
 
 > "I'm heading to Costco."
 
-The agent SHOULD perform obvious bookkeeping without asking unnecessary questions.
-
-Ask a follow-up question only when ambiguity materially affects household state or risks recording the wrong item, quantity, preference, or intent.
+The agent SHOULD infer the ordinary bookkeeping operation.
 
 ---
 
-# 36. Do Not Burden the User With Internal Bookkeeping
+## UX-02 — Avoid unnecessary clarification
 
-After successfully handling a routine update, the agent normally does not need to describe every field or row it changed.
+The agent SHOULD ask a follow-up question only when ambiguity materially affects state or creates meaningful risk of:
 
-A concise acknowledgement is sufficient when useful.
+- modifying the wrong item;
+- recording the wrong quantity;
+- inventing a preference;
+- corrupting explicit intent;
+- merging unrelated products.
+
+If a conservative representation is safe, the agent SHOULD generally use it rather than interrupting the user.
+
+---
+
+## UX-03 — Do not burden users with internal bookkeeping
+
+After routine updates, agents SHOULD NOT report every cell or field modified.
+
+A concise acknowledgement is sufficient when one is useful.
 
 For example:
 
@@ -933,37 +1343,81 @@ For example:
 
 is preferable to:
 
-> Created event row 194, changed inventory_state to low, confidence to 0.8, and explicitly_requested to true.
-
-Internal detail SHOULD be surfaced when:
-
-- the user asks;
-- an ambiguity matters;
-- the agent could not safely complete an update;
-- conflicting data needs attention.
+> Created event row 194 and changed inventory_state to low.
 
 ---
 
-# 37. Data Health Takes Priority Over Convenience
+## UX-04 — Surface internal details when they matter
 
-If a requested mutation would clearly corrupt or destroy shared state, the agent MUST refuse to perform it blindly.
+Internal bookkeeping SHOULD be explained when:
+
+- the user asks;
+- ambiguity materially affects the result;
+- conflicting evidence requires attention;
+- an update could not safely be completed;
+- an agent repaired potentially corrupted state.
+
+---
+
+# 19. Human Repairability
+
+## HUMAN-01 — Human understandability is an invariant
+
+The workbook MUST remain understandable and repairable by a human.
+
+Agents SHOULD prefer:
+
+- clear values;
+- understandable identifiers;
+- natural-language notes;
+- explicit evidence;
+
+over opaque internal encodings.
+
+---
+
+## HUMAN-02 — Do not introduce undocumented conventions
+
+Agents MUST NOT introduce storage conventions that another human or compatible agent cannot reasonably interpret.
+
+If the data model evolves, conventions SHOULD be documented.
+
+---
+
+## HUMAN-03 — Current state should be explainable
+
+A human opening the workbook SHOULD be able to determine:
+
+- what the household currently believes;
+- why it believes it;
+- what someone explicitly requested;
+- what happened recently;
+- whether an important state is inferred or directly observed.
+
+---
+
+# 20. Data Health and Recovery
+
+## HEALTH-01 — Data health outranks convenience
+
+If a requested mutation would clearly destroy or corrupt important shared state, the agent MUST NOT perform it blindly.
 
 Examples include:
 
-- deleting all event history as routine cleanup;
-- replacing uncertain quantities with invented exact numbers;
-- merging many ambiguous items automatically;
+- deleting event history as routine cleanup;
+- replacing uncertain quantities with invented exact values;
+- merging large numbers of ambiguous items automatically;
 - overwriting conflicting observations without preserving evidence.
 
-The agent SHOULD instead perform the safest useful interpretation available.
+The agent SHOULD perform the safest useful interpretation available.
 
 ---
 
-# 38. Derived State Must Be Repairable
+## HEALTH-02 — Derived state must remain reconstructable
 
-No critical household fact SHOULD exist only as an opaque agent inference when the supporting evidence can reasonably be preserved.
+Critical current state SHOULD NOT exist solely as opaque agent inference when supporting evidence can reasonably be preserved.
 
-A future agent SHOULD be able to inspect recent evidence and understand why an item is marked:
+A future agent SHOULD be able to understand why an item is marked:
 
 ```text
 probably_low
@@ -975,236 +1429,390 @@ or:
 do_not_buy
 ```
 
-Derived state SHOULD contain either:
+---
 
-- direct supporting fields;
-- a relevant latest observation;
-- links/references to events;
-- enough context to reconstruct the reasoning.
+## HEALTH-03 — Corrections should repair current state without erasing history
+
+When a human corrects an earlier observation or agent interpretation:
+
+1. preserve the correction;
+2. update current derived state;
+3. retain enough history to understand the transition.
 
 ---
 
-# 39. Agent Identity
+# 21. Safe Behavior Under Ambiguity
 
-When the workbook records who changed state, agents SHOULD distinguish:
+## SAFE-01 — Preserve evidence when uncertain
 
-- the human actor who supplied the information;
-- the agent that interpreted or wrote it.
+When the agent cannot confidently determine the correct derived state:
 
-For example:
-
-```text
-actor = Eric
-written_by = ChatGPT
-```
-
-is preferable to treating ChatGPT as the person who consumed or purchased the product.
-
-This distinction becomes important when several humans and agents participate.
+- preserve what was actually observed;
+- avoid inventing certainty;
+- maintain uncertainty explicitly.
 
 ---
 
-# 40. External Data Has Lower Authority Than Household Observation
+## SAFE-02 — Prefer checking when practical
 
-Retailer APIs, receipts, deal scrapers, inferred purchase histories, and other external sources are useful evidence.
-
-They MUST NOT override stronger direct household information.
-
-For example:
-
-```text
-Retailer history:
-no recorded milk purchase for 9 days
-
-Human:
-"We bought milk yesterday at another store."
-```
-
-The human observation wins.
-
-Similarly, a retailer showing an item in stock says nothing about whether the household needs it.
+If a household inventory question can easily be resolved by looking before departure, the agent SHOULD recommend checking rather than making an unsupported purchase recommendation.
 
 ---
 
-# 41. Missing Data Is Not Negative Data
+## SAFE-03 — Bias modestly toward stockout prevention when checking is impossible
 
-Absence of an event MUST NOT normally be interpreted as evidence that something did not happen.
+When:
 
-Household members will not report every purchase or every consumed unit.
+- evidence is uncertain;
+- checking is impractical;
+- the consequences of running out matter;
+- modest extra inventory is reasonably harmless;
 
-For example:
+the agent MAY bias toward purchasing.
 
-```text
-no recorded toothpaste purchase
-```
+This is not a universal rule.
 
-does NOT prove:
-
-```text
-no toothpaste was purchased
-```
-
-This is one of the most important limits on inventory reconstruction.
-
-Agents SHOULD become less confident as evidence becomes stale.
+Storage, perishability, expense, and existing inventory remain relevant.
 
 ---
 
-# 42. Staleness
+# 22. Invalid Transformations
 
-Inventory information SHOULD lose confidence over time when unobserved household activity could reasonably have changed it.
+The following transformations are prohibited unless additional evidence supports them.
 
-The rate of staleness depends on the item.
-
-For example:
-
-- milk inventory becomes stale quickly;
-- aluminum foil inventory may remain useful for months;
-- an explicit "we have none" observation remains important until contradicted or a purchase occurs.
-
-Agents SHOULD reason qualitatively rather than applying arbitrary universal expiration periods.
-
----
-
-# 43. Safe Default Under Ambiguity
-
-When an agent cannot confidently determine whether an item should be purchased:
-
-- preserve the evidence;
-- avoid inventing a definite state;
-- recommend checking when practical;
-- bias somewhat toward avoiding a plausible stockout when checking is impossible.
-
-The agent SHOULD NOT resolve uncertainty merely to make the data look cleaner.
-
----
-
-# 44. Examples of Invalid Transformations
-
-The following transformations are prohibited unless additional evidence exists.
+## INVALID-01
 
 ```text
 "I used one."
 → OUT
 ```
 
+Violates: `INV-03`, `USE-01`.
+
+---
+
+## INVALID-02
+
 ```text
 "We usually buy this at Costco."
 → Costco only
 ```
+
+Violates: `PREF-01`, `PREF-02`.
+
+---
+
+## INVALID-03
 
 ```text
 "I think we're low."
 → quantity = 1
 ```
 
+Violates: `INV-03`, `INVTRY-01`.
+
+---
+
+## INVALID-04
+
 ```text
 "Buy ketchup."
 → inventory = 0
 ```
 
+Violates: `STATE-01`.
+
+---
+
+## INVALID-05
+
 ```text
 "We're out."
-→ quantity = 0 exactly
+→ physical_quantity = exactly 0
 ```
 
-The final example may seem intuitive, but "out" is a household availability observation, not necessarily a physical inventory audit precise enough to justify numeric zero.
+without additional evidence.
+
+Violates: `INVTRY-05`.
 
 ---
 
-# 45. Examples of Good Interpretations
+## INVALID-06
 
 ```text
-Human:
-"We're out of Rice Krispies."
-
-Interpretation:
-strong stockout evidence;
-purchase is high priority unless explicitly suppressed.
+one purchase at Costco
+→ preferred_store = Costco
 ```
 
-```text
-Human:
-"I opened the last toothpaste."
+without additional evidence.
 
-Interpretation:
-one unit appears to be in use;
-reserve inventory appears exhausted;
-replacement should probably be purchased before the open unit runs out.
+Violates: `PREF-03`.
+
+---
+
+## INVALID-07
+
+```text
+item is on sale
+→ inventory_state = low
 ```
 
-```text
+Violates: `STATE-04`, `DEAL-01`.
+
+---
+
+# 23. Examples of Correct Interpretation
+
+## EXAMPLE-01 — Direct stockout
+
 Human:
-"I finished one ketchup."
+
+> "We're out of Rice Krispies."
+
+Interpretation:
+
+- strong stockout evidence;
+- high replenishment priority unless explicitly suppressed;
+- exact physical quantity need not be asserted.
+
+Relevant rules:
+
+`INVTRY-05`, `STOCK-01`.
+
+---
+
+## EXAMPLE-02 — Last reserve opened
+
+Human:
+
+> "I opened the last toothpaste."
+
+Interpretation:
+
+- one unit is apparently in use;
+- unopened reserve appears exhausted;
+- replacement should probably be purchased before the active unit is exhausted;
+- household is not necessarily currently unable to use toothpaste.
+
+Relevant rules:
+
+`INVTRY-06`, `TRIP-04`.
+
+---
+
+## EXAMPLE-03 — Reliable decrement
+
+Human:
+
+> "I finished one ketchup."
 
 Previous reliable state:
-2 unopened bottles.
-
-Interpretation:
-approximately 1 remains;
-do not automatically request a large replenishment.
-```
 
 ```text
-Human:
-"We usually buy ketchup at FoodMaxx."
+quantity = 2 bottles
+confidence = high
+```
 
 Interpretation:
-record FoodMaxx as a preference;
-do not prohibit purchase elsewhere.
-```
 
 ```text
-Human:
-"Don't buy paper towels, we have way too many."
-
-Interpretation:
-strong evidence of excess inventory plus explicit negative shopping intent.
+quantity ≈ 1 bottle
 ```
 
-```text
-External data:
-paper towels are heavily discounted at Costco.
+provided no conflicting activity exists.
 
-Current household state:
-explicitly excessive inventory.
+Do not automatically purchase a large replenishment.
 
-Interpretation:
-do not recommend buying merely because of the discount.
-```
+Relevant rules:
+
+`INVTRY-01`, `USE-02`, `STOCK-02`.
 
 ---
 
-# 46. Final Integrity Check Before a Write
+## EXAMPLE-04 — Store preference
+
+Human:
+
+> "We usually buy ketchup at FoodMaxx."
+
+Interpretation:
+
+- record FoodMaxx as a preferred store;
+- do not imply ketchup is needed;
+- do not prohibit purchasing ketchup elsewhere.
+
+Relevant rules:
+
+`PREF-01`, `STATE-02`.
+
+---
+
+## EXAMPLE-05 — Excess stock plus negative intent
+
+Human:
+
+> "Don't buy paper towels, we have way too many."
+
+Interpretation:
+
+- strong evidence of excess inventory;
+- explicit negative shopping intent;
+- suppress ordinary stock-up recommendations.
+
+Relevant rules:
+
+`INTENT-02`, `DEAL-02`.
+
+---
+
+## EXAMPLE-06 — Sale against excess inventory
+
+External data:
+
+> Paper towels are heavily discounted at Costco.
+
+Household state:
+
+> Paper towels are already excessively stocked.
+
+Interpretation:
+
+> Do not recommend purchasing solely because of the discount.
+
+Relevant rules:
+
+`DEAL-02`, `STOCK-04`.
+
+---
+
+## EXAMPLE-07 — Uncertain decrement
+
+Human:
+
+> "I used up a bottle of ketchup."
+
+Previous state:
+
+> Remaining quantity uncertain.
+
+Interpretation:
+
+- record one consumed bottle;
+- reduce confidence that inventory is sufficient;
+- do not assert a precise remaining quantity;
+- if a store trip is imminent, checking inventory may be appropriate.
+
+Relevant rules:
+
+`INV-03`, `INVTRY-02`, `TRIP-04`.
+
+---
+
+# 24. Mutation Integrity Checklist
+
+## CHECK-01 — Pre-write reasoning
 
 Before completing a persistent mutation, the agent SHOULD be able to answer:
 
 - What did the human actually establish?
 - What am I inferring?
-- Am I accidentally converting uncertainty into certainty?
+- Am I converting uncertainty into certainty?
 - Does this item already exist?
 - Could this be a duplicate event?
 - Am I overwriting stronger or newer evidence?
-- Am I preserving enough information to undo or reinterpret this later?
-- Would another independent agent understand the resulting state?
-- Would a human opening the workbook understand what happened?
+- Am I preserving enough information for later reinterpretation?
+- Could another independent agent understand the resulting state?
+- Could a human understand and repair the resulting state?
 
-If the answers indicate data loss or unjustified certainty, the agent SHOULD choose a more conservative representation.
+If the answers indicate unjustified certainty or data loss, the agent SHOULD choose a more conservative representation.
 
 ---
 
-# 47. Guiding Principle
+# 25. Summary of Foundational Invariants
+
+The following rules are expected to form the basis of the compact `AGENT_RUNTIME_INSTRUCTIONS.md`.
+
+They are restated here for convenience but remain governed by their full definitions above.
+
+### Evidence
+
+- `INV-01` — Never invent household facts.
+- `INV-02` — Never silently destroy evidence.
+- `INV-03` — Never promote uncertainty to certainty.
+- `INV-04` — Missing data is not negative evidence.
+- `INV-05` — Human corrections have highest authority.
+- `INV-06` — Stronger evidence outranks weaker evidence.
+
+### State
+
+- `STATE-01` — Inventory and purchase intent are independent.
+- `STATE-02` — Preferences are independent from need.
+- `STATE-03` — Recommendations are derived rather than facts.
+- `STATE-04` — External commercial data does not define household inventory.
+
+### Mutation
+
+- `MUT-01` — Read current shared state before important writes.
+- `MUT-02` — Prefer event-first mutation ordering.
+- `MUT-03` — Writes must be idempotent where possible.
+- `MUT-04` — Partial failures must remain repairable.
+- `MUT-05` — Verify plausibility after mutation.
+
+### Inventory
+
+- `INVTRY-01` — Exact quantities require reliable evidence.
+- `INVTRY-02` — Arithmetic alone does not guarantee truth.
+- `INVTRY-03` — Qualitative inventory states are valid.
+- `INVTRY-04` — Confidence may decay with staleness.
+- `INVTRY-05` — "Out" is qualitative evidence, not necessarily an exact count.
+- `INVTRY-06` — "Last one" usually means reserve exhausted, not immediately unusable.
+
+### Household purchasing
+
+- `STOCK-01` — Bias somewhat toward preventing meaningful stockouts.
+- `STOCK-02` — Inventory reduction does not automatically trigger replenishment.
+- `STOCK-03` — Minimum, normal, and stock-up inventory are distinct concepts.
+- `STOCK-04` — Overstock reduces future purchasing optionality.
+- `STOCK-05` — Storage and perishability matter.
+
+### Deals
+
+- `DEAL-01` — Deals change purchase desirability, not inventory truth.
+- `DEAL-02` — Strong deals do not override obvious excess inventory.
+- `DEAL-03` — Stock-up decisions should account for future use.
+- `DEAL-05` — Do not fabricate economic precision.
+
+### Multi-agent integrity
+
+- `CONC-01` — Assume shared state may have changed.
+- `CONC-02` — Preserve compatible concurrent updates.
+- `CONC-03` — Preserve conflicting evidence rather than silently overwriting it.
+
+### Human usability
+
+- `UX-01` — No special command syntax should be required.
+- `UX-02` — Avoid unnecessary clarification.
+- `HUMAN-01` — Human understandability is an invariant.
+- `HEALTH-02` — Derived state must remain reconstructable.
+
+---
+
+# 26. Guiding Principle
 
 The system should behave like a competent household member with a good memory, not like an inventory-control system pretending every cupboard is instrumented.
 
-Remember what people say.
+Remember what people actually say.
+
+Preserve the difference between observation, inference, intent, preference, and recommendation.
 
 Preserve uncertainty when uncertainty exists.
 
 Avoid running out of things that matter.
 
-Avoid accumulating things merely because inventory decreased.
+Do not replenish merely because inventory decreased.
 
-Use good buying opportunities intelligently.
+Avoid unnecessary excess that consumes storage and eliminates future buying flexibility.
+
+Use good purchasing opportunities intelligently.
 
 Keep the shared data understandable, recoverable, and useful to whichever human or agent reads it next.
