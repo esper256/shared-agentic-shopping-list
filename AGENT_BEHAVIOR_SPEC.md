@@ -1,7 +1,7 @@
 # Agent Behavior Specification
 
-**Status:** Draft  
-**Version:** 0.1
+**Status:** Baseline specification  
+**Version:** 0.2
 
 ## Document Purpose
 
@@ -18,6 +18,7 @@ This specification is intentionally more detailed than the runtime instructions.
 - behavioral invariants;
 - evidence semantics;
 - mutation rules;
+- lifecycle and protocol-loading requirements;
 - decision principles;
 - edge cases;
 - rationale necessary to maintain the rules correctly over time.
@@ -117,7 +118,116 @@ The system SHOULD NOT require users to maintain spreadsheet fields, issue formal
 
 ---
 
-# 2. Core Data Model
+# 2. Agent Activation and Protocol Freshness
+
+## RUNTIME-01 — Confirm runtime instruction activation
+
+After successfully loading `AGENT_RUNTIME_INSTRUCTIONS.md`, the agent MUST emit the activation acknowledgement specified by that document.
+
+The acknowledgement SHOULD be deliberately distinctive and SHOULD include the runtime instruction version.
+
+Example:
+
+> Shopping data steward active — runtime instructions v0.2 loaded.
+
+The agent MUST NOT emit this acknowledgement unless the applicable runtime instructions were actually available to it.
+
+The acknowledgement indicates that the instructions were loaded. It MUST NOT be treated as proof that the model possesses perfect or permanent understanding of them.
+
+The acknowledgement SHOULD occur when the runtime instructions are initially loaded or meaningfully reloaded, not during every ordinary household interaction.
+
+---
+
+## RUNTIME-02 — Durable conversation history is not an authoritative copy of the protocol
+
+The agent MUST NOT assume that runtime instructions remain complete, current, or salient merely because they appeared earlier in a durable conversation.
+
+A conversation may persist far longer than the model's active context.
+
+Chat products may:
+
+- summarize previous turns;
+- compact older context;
+- selectively retrieve history;
+- change models;
+- omit prior tool results;
+- otherwise transform conversational state.
+
+Conversation history, model memory, summaries, and compressed context are therefore NOT authoritative copies of the shopping protocol.
+
+---
+
+## RUNTIME-03 — The shared system identifies the authoritative protocol version
+
+The shared shopping system SHOULD contain durable configuration metadata identifying at least:
+
+```text
+protocol_version
+runtime_instructions_url
+```
+
+It MAY additionally contain:
+
+```text
+behavior_spec_version
+schema_version
+```
+
+The protocol version identifies the runtime behavioral contract that participating agents are expected to follow.
+
+The runtime instructions URL identifies the authoritative retrievable copy of `AGENT_RUNTIME_INSTRUCTIONS.md`.
+
+---
+
+## RUNTIME-04 — Verify protocol version before persistent mutation
+
+When beginning shopping-system work, the agent SHOULD inspect the shared system's protocol metadata before performing persistent mutations.
+
+The agent SHOULD determine whether the runtime instruction version available in its active context matches the current shared `protocol_version`.
+
+If the versions differ, the agent MUST load the current runtime instructions before modifying shared state.
+
+---
+
+## RUNTIME-05 — Reload instructions when active availability is uncertain
+
+If the agent cannot reliably establish that the current runtime instructions are available in its active context, it SHOULD reload them from the authoritative source before performing persistent mutations.
+
+Reloading is preferable to relying on:
+
+- vague recollection;
+- a partial conversation summary;
+- old protocol text;
+- model memory;
+- an inferred approximation of the rules.
+
+The system SHOULD NOT require the agent to fetch the full runtime instructions before every trivial interaction when the current version is already reliably active.
+
+---
+
+## RUNTIME-06 — Acknowledge meaningful protocol reloads
+
+When an agent initially loads the runtime instructions, or loads a different runtime version, it MUST emit the activation acknowledgement associated with that version.
+
+Example:
+
+> Shopping data steward active — runtime instructions v0.3 loaded.
+
+Routine verification that an already-active version remains current SHOULD NOT repeatedly generate activation messages.
+
+---
+
+## RUNTIME-07 — Failure to load the authoritative protocol must be visible
+
+If the agent determines that it needs the current runtime instructions but cannot retrieve or read them, it MUST NOT silently proceed with persistent mutations as though the protocol were available.
+
+It SHOULD tell the user that the shopping protocol could not be loaded and avoid potentially destructive writes until the condition is resolved.
+
+Read-only assistance MAY continue when doing so does not risk corrupting shared state.
+
+---
+
+# 3. Core Data Model
 
 ## DATA-01 — Separate events from derived state
 
@@ -198,7 +308,33 @@ inventory_state = low
 
 ---
 
-# 3. Evidence Integrity
+## DATA-04 — Configuration metadata is shared durable state
+
+The workbook SHOULD contain a small configuration dataset, such as a `Config` sheet, containing system-level metadata.
+
+At minimum it SHOULD support:
+
+```text
+key                         value
+------------------------------------------------------------
+protocol_version            0.2
+runtime_instructions_url    <authoritative runtime document>
+```
+
+It MAY additionally contain:
+
+```text
+behavior_spec_version       0.2
+schema_version              0.1
+```
+
+Configuration metadata is not ordinary household inventory and SHOULD NOT be modified casually by agents.
+
+Only explicit administrative intent or an authorized system upgrade SHOULD change protocol or schema metadata.
+
+---
+
+# 4. Evidence Integrity
 
 ## INV-01 — Never invent household facts
 
@@ -328,7 +464,7 @@ Recency matters within the same evidence class.
 
 ---
 
-# 4. Distinct State Dimensions
+# 5. Distinct State Dimensions
 
 ## STATE-01 — Inventory and purchase intent are independent
 
@@ -411,7 +547,7 @@ not:
 
 ---
 
-# 5. Inventory Representation
+# 6. Inventory Representation
 
 ## INVTRY-01 — Exact quantities require reliable evidence
 
@@ -436,7 +572,7 @@ MAY support:
 estimated_quantity = 1 bottle
 ```
 
-But only if the prior quantity remains trustworthy.
+but only if the prior quantity remains trustworthy.
 
 ---
 
@@ -548,7 +684,7 @@ This normally represents low reserve inventory rather than an immediate stockout
 
 ---
 
-# 6. Purchase Intent
+# 7. Purchase Intent
 
 ## INTENT-01 — Explicit purchase requests persist
 
@@ -606,7 +742,7 @@ does not fully satisfy the request.
 
 ---
 
-# 7. Item Identity
+# 8. Item Identity
 
 ## ITEM-01 — Resolve existing canonical items before creating new ones
 
@@ -678,7 +814,7 @@ Otherwise it MAY record evidence conservatively until the ambiguity can be resol
 
 ---
 
-# 8. Store and Product Preferences
+# 9. Store and Product Preferences
 
 ## PREF-01 — Store preferences are not absolute unless stated
 
@@ -737,7 +873,7 @@ Where practical, temporary state SHOULD include scope, expiry, or explanatory co
 
 ---
 
-# 9. Event Recording
+# 10. Event Recording
 
 ## EVENT-01 — Material observations should be persisted
 
@@ -807,7 +943,7 @@ It SHOULD NOT create persistent household state merely because it was asked.
 
 ---
 
-# 10. Mutation Protocol
+# 11. Mutation Protocol
 
 ## MUT-01 — Read before write
 
@@ -825,12 +961,13 @@ Agents MUST assume shared state may have changed since their conversational cont
 When practical, a state-changing operation SHOULD occur in this order:
 
 ```text
-1. Read relevant current state.
-2. Resolve canonical item identity.
-3. Interpret the new evidence.
-4. Append the event.
-5. Update derived item state.
-6. Verify resulting state.
+1. Verify the applicable runtime protocol.
+2. Read relevant current state.
+3. Resolve canonical item identity.
+4. Interpret the new evidence.
+5. Append the event.
+6. Update derived item state.
+7. Verify resulting state.
 ```
 
 This makes the event log the recoverable record.
@@ -885,7 +1022,7 @@ Examples of suspicious results include:
 
 ---
 
-# 11. Concurrent Agents
+# 12. Concurrent Agents
 
 ## CONC-01 — Assume other agents may have written newer state
 
@@ -913,7 +1050,7 @@ Current state SHOULD then be derived using evidence quality, recency, and explic
 
 ---
 
-# 12. Consumption and Purchases
+# 13. Consumption and Purchases
 
 ## USE-01 — Consumption reduces inventory evidence, not necessarily to zero
 
@@ -966,7 +1103,7 @@ Derived stock state should reflect the total evidence, not merely the existence 
 
 ---
 
-# 13. Stock Management Principles
+# 14. Stock Management Principles
 
 ## STOCK-01 — Bias toward preventing meaningful stockouts
 
@@ -1039,7 +1176,7 @@ The agent MUST NOT assume infinite storage.
 
 ---
 
-# 14. Deal-Aware Behavior
+# 15. Deal-Aware Behavior
 
 ## DEAL-01 — Deals modify purchase desirability, not inventory truth
 
@@ -1134,7 +1271,7 @@ It SHOULD NOT invent exact optimization scores, savings probabilities, consumpti
 
 ---
 
-# 15. External Data
+# 16. External Data
 
 ## EXT-01 — Household observations outrank external data
 
@@ -1181,7 +1318,7 @@ Expired promotions SHOULD cease influencing current recommendations.
 
 ---
 
-# 16. Learning Household Patterns
+# 17. Learning Household Patterns
 
 ## LEARN-01 — Learn conservatively
 
@@ -1215,7 +1352,7 @@ New explicit human behavior or corrections MUST be able to supersede historical 
 
 ---
 
-# 17. Shopping Trip Briefings
+# 18. Shopping Trip Briefings
 
 ## TRIP-01 — Provide actionable summaries, not raw database dumps
 
@@ -1295,7 +1432,7 @@ Routine adequate items do not need to be listed merely to say they are adequate.
 
 ---
 
-# 18. Interaction Design
+# 19. Interaction Design
 
 ## UX-01 — No special command syntax required
 
@@ -1359,7 +1496,7 @@ Internal bookkeeping SHOULD be explained when:
 
 ---
 
-# 19. Human Repairability
+# 20. Human Repairability
 
 ## HUMAN-01 — Human understandability is an invariant
 
@@ -1396,7 +1533,7 @@ A human opening the workbook SHOULD be able to determine:
 
 ---
 
-# 20. Data Health and Recovery
+# 21. Data Health and Recovery
 
 ## HEALTH-01 — Data health outranks convenience
 
@@ -1441,7 +1578,7 @@ When a human corrects an earlier observation or agent interpretation:
 
 ---
 
-# 21. Safe Behavior Under Ambiguity
+# 22. Safe Behavior Under Ambiguity
 
 ## SAFE-01 — Preserve evidence when uncertain
 
@@ -1476,7 +1613,7 @@ Storage, perishability, expense, and existing inventory remain relevant.
 
 ---
 
-# 22. Invalid Transformations
+# 23. Invalid Transformations
 
 The following transformations are prohibited unless additional evidence supports them.
 
@@ -1561,7 +1698,29 @@ Violates: `STATE-04`, `DEAL-01`.
 
 ---
 
-# 23. Examples of Correct Interpretation
+## INVALID-08
+
+```text
+runtime instructions appeared near the beginning of this conversation
+→ assume they are still fully active and current
+```
+
+Violates: `RUNTIME-02`, `RUNTIME-04`, `RUNTIME-05`.
+
+---
+
+## INVALID-09
+
+```text
+agent remembers approximately how the shopping system works
+→ perform persistent writes without checking a known-new protocol version
+```
+
+Violates: `RUNTIME-04`, `RUNTIME-05`.
+
+---
+
+# 24. Examples of Correct Interpretation
 
 ## EXAMPLE-01 — Direct stockout
 
@@ -1708,12 +1867,67 @@ Relevant rules:
 
 ---
 
-# 24. Mutation Integrity Checklist
+## EXAMPLE-08 — Long-lived conversation with current protocol
+
+Shared configuration:
+
+```text
+protocol_version = 0.4
+```
+
+Agent can reliably establish that runtime instructions v0.4 are currently active.
+
+Human:
+
+> "We're out of cereal."
+
+Interpretation:
+
+- no redundant full protocol reload is required;
+- process the observation under v0.4;
+- do not repeat the activation acknowledgement merely because configuration was checked.
+
+Relevant rules:
+
+`RUNTIME-04`, `RUNTIME-06`.
+
+---
+
+## EXAMPLE-09 — Long-lived conversation after protocol upgrade
+
+Conversation originally loaded:
+
+```text
+runtime instructions v0.3
+```
+
+Shared configuration now says:
+
+```text
+protocol_version = 0.4
+runtime_instructions_url = <authoritative v0.4 document>
+```
+
+Interpretation:
+
+1. retrieve runtime instructions v0.4;
+2. make them available in active context;
+3. emit the v0.4 activation acknowledgement;
+4. only then perform persistent household mutations.
+
+Relevant rules:
+
+`RUNTIME-03`, `RUNTIME-04`, `RUNTIME-06`.
+
+---
+
+# 25. Mutation Integrity Checklist
 
 ## CHECK-01 — Pre-write reasoning
 
 Before completing a persistent mutation, the agent SHOULD be able to answer:
 
+- Is the applicable runtime protocol current and available?
 - What did the human actually establish?
 - What am I inferring?
 - Am I converting uncertainty into certainty?
@@ -1724,15 +1938,25 @@ Before completing a persistent mutation, the agent SHOULD be able to answer:
 - Could another independent agent understand the resulting state?
 - Could a human understand and repair the resulting state?
 
-If the answers indicate unjustified certainty or data loss, the agent SHOULD choose a more conservative representation.
+If the answers indicate stale protocol use, unjustified certainty, or data loss, the agent SHOULD choose a safer path before writing.
 
 ---
 
-# 25. Summary of Foundational Invariants
+# 26. Summary of Foundational Invariants
 
 The following rules are expected to form the basis of the compact `AGENT_RUNTIME_INSTRUCTIONS.md`.
 
 They are restated here for convenience but remain governed by their full definitions above.
+
+### Runtime protocol
+
+- `RUNTIME-01` — Confirm successful runtime instruction activation.
+- `RUNTIME-02` — Durable conversation history is not an authoritative copy of the protocol.
+- `RUNTIME-03` — Shared configuration identifies the authoritative protocol version.
+- `RUNTIME-04` — Verify protocol version before persistent mutation.
+- `RUNTIME-05` — Reload runtime instructions when their active availability is uncertain.
+- `RUNTIME-06` — Acknowledge initial loads and meaningful protocol reloads.
+- `RUNTIME-07` — Failure to load required instructions must be visible.
 
 ### Evidence
 
@@ -1753,7 +1977,7 @@ They are restated here for convenience but remain governed by their full definit
 ### Mutation
 
 - `MUT-01` — Read current shared state before important writes.
-- `MUT-02` — Prefer event-first mutation ordering.
+- `MUT-02` — Prefer protocol verification and event-first mutation ordering.
 - `MUT-03` — Writes must be idempotent where possible.
 - `MUT-04` — Partial failures must remain repairable.
 - `MUT-05` — Verify plausibility after mutation.
@@ -1797,7 +2021,7 @@ They are restated here for convenience but remain governed by their full definit
 
 ---
 
-# 26. Guiding Principle
+# 27. Guiding Principle
 
 The system should behave like a competent household member with a good memory, not like an inventory-control system pretending every cupboard is instrumented.
 
@@ -1806,6 +2030,10 @@ Remember what people actually say.
 Preserve the difference between observation, inference, intent, preference, and recommendation.
 
 Preserve uncertainty when uncertainty exists.
+
+Do not trust ancient conversation context to remain a complete copy of the operating protocol.
+
+Verify the protocol when necessary and make protocol activation observable to the human.
 
 Avoid running out of things that matter.
 
