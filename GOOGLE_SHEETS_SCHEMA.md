@@ -126,12 +126,26 @@ Official references:
 | `key` | Initial `value` | `description` |
 |---|---|---|
 | `schema_version` | `0.1` | Shopping Database schema version |
+| `schema_url` | *(set during setup)* | Authoritative `GOOGLE_SHEETS_SCHEMA.md` |
 | `protocol_version` | `0.2` | Required agent runtime-instruction version |
 | `runtime_instructions_url` | *(set during setup)* | Authoritative `AGENT_RUNTIME_INSTRUCTIONS.md` |
 | `behavior_spec_version` | `0.2` | Informational behavior-spec version |
 | `behavior_spec_url` | *(set during setup)* | Full behavior specification |
 | `household_timezone` | *(set during setup)* | IANA timezone such as `America/Los_Angeles` |
 | `currency` | *(set during setup)* | Currency such as `USD` |
+| `timestamp_format` | `ISO-8601 with explicit timezone offset` | Machine-written timestamp convention |
+
+Example `schema_url`:
+
+```text
+https://raw.githubusercontent.com/esper256/shared-agentic-shopping-list/main/GOOGLE_SHEETS_SCHEMA.md
+```
+
+Agents SHOULD load `schema_url` when `schema_version` is unfamiliar.
+
+`timestamp_format` summarizes the machine-written timestamp convention defined below. Live workbooks SHOULD keep this key so agents and humans can recover the expected representation without rereading the full schema.
+
+`schema_url` and `runtime_instructions_url` MAY point at a mutable branch such as `main` during development. For releases, prefer immutable tag or commit URLs over `main`.
 
 Agents MUST NOT casually modify protocol or schema configuration. These values change only as part of explicit system administration or upgrade.
 
@@ -139,7 +153,39 @@ Do not store frequently changing counters such as `next_event_id` in `Config`; s
 
 ---
 
-# 5. `Items` Sheet
+# 5. Machine-Written Timestamps
+
+The following fields are machine-written timestamps when populated by an agent:
+
+```text
+recorded_at
+occurred_at
+inventory_as_of
+intent_expires_at
+updated_at
+```
+
+Agents MUST serialize these values as ISO-8601 text with an explicit timezone offset.
+
+Example:
+
+```text
+2026-09-10T14:15:23-07:00
+```
+
+Agents MUST NOT write:
+
+- locale strings such as `9/10/26 2:15 PM`;
+- Google Sheets native date serials;
+- ambiguous timezone-less date-times for machine writes.
+
+Spreadsheet columns for these fields SHOULD be formatted as Plain text so Sheets does not rewrite the stored representation.
+
+For `occurred_at`, store only the precision supported by evidence. A date-only value such as `2026-09-10` is acceptable when the evidence does not establish a time. Agents MUST NOT invent an exact time.
+
+---
+
+# 6. `Items` Sheet
 
 `Items` is the hot-path materialized view of current household state.
 
@@ -230,7 +276,7 @@ An agent can usually understand the current interpretation without retrieving th
 
 ---
 
-# 6. `Events` Sheet
+# 7. `Events` Sheet
 
 `Events` is an append-only evidence ledger.
 
@@ -299,7 +345,7 @@ Physical row order is not authoritative chronological order; timestamps and iden
 
 ---
 
-# 7. Normal API Access Pattern
+# 8. Normal API Access Pattern
 
 ## Routine state-changing message
 
@@ -341,7 +387,7 @@ Routine store briefings SHOULD NOT scan the full ledger.
 
 ---
 
-# 8. Why `Events` Is a Cold Path
+# 9. Why `Events` Is a Cold Path
 
 The ledger may grow forever.
 
@@ -364,7 +410,7 @@ This design optimizes both API access and language-model context.
 
 ---
 
-# 9. Why There Is No Index Sheet in Schema v0.1
+# 10. Why There Is No Index Sheet in Schema v0.1
 
 Google Sheets is not a relational query engine. The standard value API is naturally range-oriented.
 
@@ -384,7 +430,7 @@ If real usage demonstrates that `Items` becomes too large, future versions MAY a
 
 ---
 
-# 10. Concurrent Write Strategy
+# 11. Concurrent Write Strategy
 
 Google Sheets collaboration does not provide the same row-level compare-and-swap semantics as a conventional transactional application database.
 
@@ -409,7 +455,7 @@ A future implementation MAY add stronger concurrency control, but correctness of
 
 ---
 
-# 11. Physical Spreadsheet Rules
+# 12. Physical Spreadsheet Rules
 
 The workbook SHOULD remain boring and predictable.
 
@@ -431,9 +477,13 @@ Humans MAY sort `Items`; stable `item_id` values ensure sorting does not change 
 
 Formatting and data validation MAY improve human usability, but an agent capable only of reading and writing ordinary cell values should still be able to participate correctly.
 
+Human-facing column widths and wrap for headers and long text fields (`item_policy`, `state_summary`, `raw_message`, `interpretation`) are recommended so a person can read and repair the workbook in place. That formatting is not required for API correctness.
+
+Timestamp columns listed in section 5 SHOULD be formatted as Plain text so Sheets does not rewrite machine-written values.
+
 ---
 
-# 12. Blank Workbook Definition
+# 13. Blank Workbook Definition
 
 A conforming blank Shopping Database contains:
 
@@ -485,11 +535,13 @@ Shared Agentic Shopping Database
 
 `Items` and `Events` contain only their header rows when a household starts.
 
-`Config` contains the initial configuration rows defined above.
+`Config` contains the initial configuration rows defined above, including `schema_url` and `timestamp_format`.
+
+Timestamp columns SHOULD be formatted as Plain text in a blank workbook so Sheets does not rewrite later machine writes. Column widths and wrap for headers and long text fields MAY be applied for human repairability; they are not required for API correctness.
 
 ---
 
-# 13. Explicit Non-Goals for v0.1
+# 14. Explicit Non-Goals for v0.1
 
 Schema v0.1 intentionally does NOT include:
 
@@ -512,7 +564,7 @@ The initial design should validate the core premise first: independent household
 
 ---
 
-# 14. Future Scaling Triggers
+# 15. Future Scaling Triggers
 
 The schema should evolve because of observed problems rather than speculative scale.
 
@@ -539,7 +591,7 @@ None are required for schema v0.1.
 
 ---
 
-# 15. Central Design Principle
+# 16. Central Design Principle
 
 The database should be optimized for the common case:
 

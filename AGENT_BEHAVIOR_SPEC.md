@@ -171,11 +171,14 @@ It MAY additionally contain:
 ```text
 behavior_spec_version
 schema_version
+schema_url
 ```
 
 The protocol version identifies the runtime behavioral contract that participating agents are expected to follow.
 
 The runtime instructions URL identifies the authoritative retrievable copy of `AGENT_RUNTIME_INSTRUCTIONS.md`.
+
+Agents SHOULD load `schema_url` when `schema_version` is unfamiliar. See `GOOGLE_SHEETS_SCHEMA.md` for the Config key and timestamp conventions.
 
 ---
 
@@ -185,7 +188,13 @@ When beginning shopping-system work, the agent SHOULD inspect the shared system'
 
 The agent SHOULD determine whether the runtime instruction version available in its active context matches the current shared `protocol_version`.
 
-If the versions differ, the agent MUST load the current runtime instructions before modifying shared state.
+If the versions differ, the agent MUST load the current runtime instructions from `runtime_instructions_url` before modifying shared state.
+
+Before persistent writes, the agent MUST load that URL when needed and MUST verify that the loaded document's declared Protocol Version equals `Config.protocol_version`.
+
+If they disagree, the agent MUST NOT perform potentially corrupting writes. It SHOULD tell the user and reload the matching protocol.
+
+`runtime_instructions_url` MAY point at a mutable branch such as `main` during development. For releases, prefer immutable tag or commit URLs over `main`.
 
 ---
 
@@ -326,6 +335,7 @@ It MAY additionally contain:
 ```text
 behavior_spec_version       0.2
 schema_version              0.1
+schema_url                  <authoritative schema document>
 ```
 
 Configuration metadata is not ordinary household inventory and SHOULD NOT be modified casually by agents.
