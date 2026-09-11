@@ -41,3 +41,5 @@ That makes the system less of a shopping list and more of a **shared household p
 This project is currently defining the behavior and shared-data conventions that let independent AI agents cooperate safely. The first implementation will use Google Sheets for durable, human-readable shared storage.
 
 The goal is to keep the human experience extremely simple: **talk to your AI normally, and let the agents maintain the list together.**
+
+Grok Bot can already use a Google service account shared on the workbook. ChatGPT Pro on Android cannot use that same pattern; the current plan for that client is in [`integrations/chatgpt/README.md`](integrations/chatgpt/README.md).

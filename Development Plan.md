@@ -744,6 +744,8 @@ Have a second independent agent operate on the same Sheet and determine where co
 
 Document working ACL/OAuth setup for ChatGPT, Gemini, Grok, and any other supported agents.
 
+ChatGPT Pro on Android is not a drop-in copy of the Grok service-account path. Research and a recommended trial order live in `integrations/chatgpt/README.md`. Do not assume Custom GPT Actions are available on a personal Pro account.
+
 **Milestone 0.6 — Store briefing**
 
 Make "I'm going to X" consistently produce an excellent actionable summary.
