@@ -10,7 +10,7 @@ This is the ChatGPT-specific slice of Development Plan Phase 3 / Milestone 0.5. 
 
 ## Recommendation in one paragraph
 
-Do **not** try to copy the Grok Bot pattern (ChatGPT talking directly to the Sheets API with a service account). ChatGPT Pro cannot hold a Google service account, cannot create new Custom GPTs, and cannot yet use the Drive-in-Library editor from the Android app. The most trouble-free path that still fits a personal Pro subscription is a **ChatGPT Project** whose instructions are the shopping steward protocol, with the Google Drive plugin connected to a Google account that already has Editor access to the workbook. Validate that path on her phone this week. If Android cannot persist writes, fall back to ChatGPT’s **mobile website / home-screen shortcut** (the Drive editor is web-first). Only if that is too clumsy should we add a tiny Cloud Run façade in front of the existing service account — and even then, consuming it from the Android ChatGPT **app** currently has no clean Pro-personal hook.
+ChatGPT cannot hold the Grok service-account key itself, so the closest copy of the Grok pattern is a **tiny Cloud Run adapter** in the same GCP project: it uses that service account against Sheets and speaks **MCP** to ChatGPT. Household traffic fits Cloud Run’s always-free compute quota with room to spare, but it is **not a no-billing-account product** — Google still requires a billing account and card, and a few misconfigurations (minimum instances, leftover container images) are how people get surprise invoices. The harder problem is the ChatGPT **client**: custom MCP is Developer Mode, officially **web-not-mobile**, with conflicting docs on whether personal Pro can **write**, and Android bugs that approve a tool then never send `tools/call`. Build the adapter only if you accept a GCP billing relationship kept at $0 by quotas and a budget alert, **and** you prove on her Pro account that ChatGPT will actually invoke write tools from a client she will use.
 
 ---
 
@@ -112,53 +112,48 @@ If the Android **app** cannot mutate the sheet, the **website** is the officiall
 
 Worse than the native app (no Advanced Voice in the same way, easier to wander out of the Project). Still zero infrastructure, and it uses the same Drive plugin she already connected. Prefer this over building a backend if she will tolerate it.
 
-### 3. Household Sheets façade + ChatGPT Business Custom GPT — **best Grok-equivalent, higher cost**
+### 3. Cloud Run MCP adapter on the Grok service account — **closest to Grok; acceptable if GCP stays at $0**
 
-This is the architecture that actually mirrors Grok:
+This is the architecture ChatGPT is recommending, and it is the one that actually mirrors Grok:
 
 ```text
-Same Google service account already shared on the sheet
+Shopping workbook
         ▲
-        │ Sheets API (spreadsheets.values.batchGet / append / update)
-Cloud Run or Cloud Function in the existing GCP project
+        │ already shared with the Grok service account
+        │
+Same Google service account
         ▲
-        │ HTTPS + API key (or OAuth)
-ChatGPT Custom GPT Action  (Business/Edu/Enterprise can still create GPTs)
+        │ Sheets API (batchGet Config+Items, append Events, update Items)
+Cloud Run  (scale-to-zero, streamable HTTP MCP at /mcp)
+        ▲
+        │ HTTPS + bearer token (not raw unauthenticated)
+ChatGPT Developer Mode connector
         ▲
         │
-  Android ChatGPT app  — pin the GPT, talk normally
+  ChatGPT Pro  — web today; Android is the open risk
 ```
 
 Expose **protocol tools**, not the raw Sheets API:
 
 ```text
-get_snapshot()           → Config + Items
+get_snapshot()           → Config + Items     readOnlyHint: true
 append_events([...])     → Events rows
 update_items([...])      → narrow Item field updates
-get_recent_events(...)   → cold path only
+get_recent_events(...)   → cold path only     readOnlyHint: true
 ```
 
-That is the performant design: one read of the hot path, small JSON, timestamps serialized in the façade so ChatGPT cannot emit `9/10/26 2:15 PM`.
+The façade owns ISO-8601 timestamps so ChatGPT cannot emit `9/10/26 2:15 PM`. It hard-codes one `spreadsheetId`. ChatGPT never sees Google.
 
-**Do not** point a GPT Action at:
+**Do not** point ChatGPT at:
 
 - `https://sheets.googleapis.com` with her Google OAuth (`spreadsheets` scope is huge and LLM-hostile);
-- a Google Apps Script `/exec` URL (ChatGPT historically eats the 302 HTML interstitial and reports `ResponseTooLarge`).
+- a Google Apps Script `/exec` URL (ChatGPT historically eats the 302 HTML interstitial and reports `ResponseTooLarge`). Apps Script is also a poor MCP host (no streamable HTTP/SSE).
 
-**Cost / friction:** ChatGPT Business is a workspace plan (two-seat minimum, currently advertised around $20–25/user/month). That is a plan change, not a toggle on Pro. Only justify this if native Drive-on-Android is a dead end **and** she refuses the web/PWA fallback.
+Details on staying at $0, and on whether ChatGPT will actually *call* this from her phone, are in [GCP adapter: free tier vs billing headache](#gcp-adapter-free-tier-vs-billing-headache) and [Will ChatGPT Pro call this MCP?](#will-chatgpt-pro-call-this-mcp).
 
-If she already has a **pre-August-2026 Custom GPT** on the Pro account, you may still be able to **edit** it and add Actions without Business. Ask that before paying for seats.
+### 4. ChatGPT Business Custom GPT Actions — **only if MCP writes are blocked on Pro**
 
-### 4. Custom MCP / Apps SDK on personal Pro — **not for her phone**
-
-A remote MCP server using the service account is an excellent *engine*, and it would be the right long-term adapter if ChatGPT mobile ever hosts custom apps. Today:
-
-- add custom MCP via Developer Mode **on the web**;
-- official help: MCP apps **not on mobile**;
-- write confirmations and tool-picking are developer-oriented;
-- Android Apps SDK threads report failures before `tools/call`.
-
-Build this only as a shared backend **after** there is a mobile client that can call it (Business GPT Actions, a published plugin, or future mobile MCP).
+If Developer Mode on personal Pro turns out to be read/fetch-only (OpenAI’s help center and developer docs currently disagree), the same Cloud Run process can speak **OpenAPI** instead of MCP and be consumed as Custom GPT Actions. That still requires ChatGPT Business (or an existing pre-August GPT you can still edit). Do not buy Business seats to solve hosting; buy them only if Pro cannot write.
 
 ### 5. Rejected as primary UX
 
@@ -238,31 +233,121 @@ If we do build a façade, put it in the **same GCP project as the Grok service a
 
 ---
 
+## GCP adapter: free tier vs billing headache
+
+Household shopping will not exhaust Cloud Run compute. The billing headache is **having a Google Cloud billing relationship at all**, plus a short list of knobs that take you off the free tier.
+
+### What “free” actually means
+
+Official [Google Cloud Free Program](https://docs.cloud.google.com/free/docs/free-cloud-features) (checked 2026-09-11):
+
+- A **billing account is required**, even to use Always Free. New accounts usually attach a card via Free Trial ($300 credit), then convert to a paid billing account. Linking a card is not the same as being charged, but it **is** a billing relationship: overages invoice automatically.
+- Cloud Run Always Free (request-based billing, quoted against `us-central1` Tier 1): **2 million requests / month**, **180,000 vCPU-seconds**, **360,000 GiB-seconds** of memory, **1 GB** North America egress. Shared across every project on that billing account.
+- Idle scale-to-zero with **minimum instances = 0** and **request-based billing** (CPU only while serving) incurs **no compute charge**.
+
+A kitchen-and-store-trip household might generate a few dozen MCP calls a day. That is thousands of requests a month, not millions. A 128–512 MiB service that runs for a second or two per call is nowhere near the CPU/memory seconds. Snapshot JSON is tens of kilobytes, not the 1 GB egress cap.
+
+So: **yes, this workload fits the free compute quota.** It does not fit a “I refuse to give Google a card” constraint.
+
+### How people accidentally pay
+
+These are the real invoice paths, not request volume:
+
+| Misconfiguration | Why it bills |
+|---|---|
+| **Minimum instances ≥ 1** | Instance never scales to zero; you pay 24/7. |
+| **Instance-based billing** (“CPU always allocated”) | Charged for idle time after a request, not only while serving. |
+| **Leaving old images in Artifact Registry** | Cloud Run source deploys store images. Always Free storage is **0.5 GiB-month per billing account**. Repeated `gcloud run deploy --source` without deleting old tags is the classic surprise. |
+| **Cloud Build overage** | Source deploy uses Cloud Build. **2,500 free build-minutes / month** (promotional, default pool). Fine for rare deploys; not for a CI firehose. |
+| **Wrong region** | Free-tier discount is applied at `us-central1` Tier 1 rates. Deploy there. |
+| **Public unauthenticated URL** | Bots hitting `/mcp` still count as requests. Unlikely to hit 2M, but it is a reason to require a bearer token. |
+| **Other products in the same billing account** | Always Free is **per billing account**, not per project. A forgotten VM elsewhere eats the same pool. |
+
+Cloud Run’s own pricing page is explicit: Build and Artifact Registry are **not** included in Cloud Run’s free tier.
+
+### Guardrails if we deploy this
+
+Keep the service boring:
+
+```text
+region:            us-central1
+memory:            512Mi or less
+cpu:               1
+min-instances:     0
+max-instances:     1
+billing:           request-based (CPU throttled when idle)
+auth:              public URL + application bearer token
+                   (ChatGPT cannot mint Google identity tokens)
+service account:   the existing Grok Sheets identity, or a clone with
+                   only spreadsheets scope on this one workbook
+```
+
+Also:
+
+1. Create a **budget of $1** (or $0 if the UI allows) with email alerts at 1%, 50%, 90%. That is the anti-headache control. Google will not refuse charges for you unless you add extra automation to disable billing.
+2. After each deploy, delete old Artifact Registry images in `cloud-run-source-deploy` so storage stays under 0.5 GiB.
+3. Do not turn on Cloud SQL, Load Balancing, a custom domain on a forwarding rule, or minimum instances “to avoid cold start.” A 1–3s cold start on the first shopping message of the day is fine.
+4. Log at warning, not debug-of-every-Sheets-payload, so Logging stays trivial.
+
+There is **no** Cloud Run path that avoids a billing account. Firebase Spark also will not host this: Cloud Functions need Blaze (a billing account) the same way.
+
+Apps Script would avoid GCP billing, but it is the wrong protocol host for MCP and a known-bad ChatGPT Action endpoint. Skip it.
+
+### What I would still verify before writing code
+
+1. The GCP project that already owns the Grok service account: does it **already** have a billing account? If Grok only needed a service account + Sheets API, it may not. Enabling Cloud Run is what forces the card.
+2. On **her** ChatGPT Pro web session: Developer Mode → add a hello-world MCP → can a **write** tool run, or is Pro limited to `search`/`fetch` as the help center claims?
+3. Same connector from the **Android app** and from **Chrome on the phone**. Community reports: Android constructs the approval UI, she taps Allow, `tools/call` never hits the server.
+
+If (2) is read-only, a free Cloud Run box does not help her update the list. If (3) fails and she will not use ChatGPT in Chrome, same conclusion.
+
+---
+
+## Will ChatGPT Pro call this MCP?
+
+OpenAI currently publishes two stories:
+
+- [Developer Mode docs](https://developers.openai.com/api/docs/guides/developer-mode): Plus and Pro, **on the web**, full MCP client, **read and write**, write tools confirm unless `readOnlyHint` is set. Auth: OAuth, none, or mixed; token auth is also described in connector setup.
+- [Help center](https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-apps-in-chatgpt-beta): MCP apps **not on mobile**. “Full MCP is only available to Business and Enterprise/Edu… Pro users can connect MCPs with **read/fetch** permissions in developer mode.”
+
+Treat writes-on-Pro as **unproven until tested on her account**. Treat Android as **unproven and currently hostile** (separate Apps SDK threads: `initialize` / `tools/list` succeed, `tools/call` never leaves the phone).
+
+Wife UX if it only works on web: Developer Mode from the `+` menu, connector selected, confirm writes (once per conversation if she taps “remember”). That is closer to Grok’s identity model than Drive OAuth, and worse than Grok’s “just talk” UX. A Chrome home-screen shortcut to ChatGPT web is the realistic phone client until OpenAI ships custom MCP on the Android app.
+
+Do not ask her to live in Developer Mode if native Drive-in-Project already writes from the Android app. The adapter is for **Grok-parity access control and protocol tools**, not for its own sake.
+
+---
+
 ## What I would not do yet
 
-- Do not add Apps Script “for ChatGPT” as the HTTP endpoint.
+- Do not add Apps Script “for ChatGPT” as the HTTP or MCP endpoint.
 - Do not publish a public GPT Store / plugin just so two people can buy milk.
 - Do not move the canonical store off Sheets because ChatGPT’s client is awkward. Sheets is still the right household database; ChatGPT is the awkward client.
-- Do not ask her to enable Developer Mode.
+- Do not set Cloud Run minimum instances to dodge cold start.
+- Do not enable Developer Mode on her account until a write-capable MCP hello-world has been proven on **your** Pro/web session, or you have accepted Chrome-on-phone as her client.
 
 ---
 
 ## Open questions
 
-These change the recommendation if answered “yes”:
+These change the recommendation:
 
-1. Does she already have a **Custom GPT** created before ~16 August 2026 that we can still edit (and add Actions to)?
-2. Is the workbook already shared with her as a **human** Editor, or only with the Grok service account?
-3. Is she willing to complete a **Google OAuth** screen inside ChatGPT? If not, only a façade works.
-4. Is a Chrome/PWA shortcut acceptable if the Android app cannot write?
-5. Would you ever consider **ChatGPT Business** (two seats) to regain Custom GPTs, or is personal Pro a hard constraint?
-6. Which Google account should ChatGPT use: her personal Gmail, or a household-only account?
-7. How do confirmation dialogs feel to her — deal-breaker, or fine?
+1. Does the GCP project that owns the Grok service account **already have a billing account**? Enabling Cloud Run is what forces a card if it does not.
+2. Is attaching a Google Cloud billing account with a **$1 budget alert** an acceptable “billing relationship,” or is any card-on-file a deal-breaker?
+3. On her ChatGPT Pro **web** session, can Developer Mode actually **write**, or only `search`/`fetch`?
+4. Will she use ChatGPT in **Chrome on the phone** if the Android app will not send MCP `tools/call`?
+5. Does she already have a **Custom GPT** created before ~16 August 2026 that we can still edit?
+6. How do write-confirmation dialogs feel to her — deal-breaker, or fine once per conversation?
 
 ---
 
 ## Suggested next step
 
-Run the Android experiment above on her phone before implementing anything. That is a one-session test and it tells us whether this household’s ChatGPT client is “Project + Drive,” “web shortcut + Drive,” or “we need a façade.”
+Two proofs, in this order, before implementing the adapter:
 
-If the experiment passes, the follow-up documentation in this repo should be a short `SETUP.md` ChatGPT section (create Project, connect Drive, pin on Android, what to say). If it fails, the follow-up is a Cloud Run snapshot/append/update API using the existing service account — still behind whatever ChatGPT client can actually call it from her phone.
+1. **ChatGPT Pro write test (no GCP).** On web, enable Developer Mode, add any trivial remote MCP (even a public echo server or a local tunnel), and try a tool *without* `readOnlyHint`. If that is blocked, Cloud Run will not help her update the list on personal Pro.
+2. **Android vs Chrome.** Repeat that write from the official Android app and from Chrome on the same phone.
+
+If writes work on a client she will actually open, Cloud Run on Always Free with the guardrails above is a reasonable Grok-shaped adapter: same service account, protocol tools, no personal Drive grant. If writes only work on desktop web, decide whether a Chrome home-screen shortcut is good enough before spending time on the service.
+
+If the write test fails on Pro entirely, stop. The next paid lever is ChatGPT Business for Custom GPT Actions, not a bigger GCP bill.
